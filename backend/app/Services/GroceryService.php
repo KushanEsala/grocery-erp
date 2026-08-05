@@ -162,7 +162,7 @@ class GroceryService
     {
         return DB::transaction(function () use ($user, $data, $hold) {
             $heldSale = null;
-            if (! $hold && ($data['held_sale_id'] ?? null)) {
+            if ($data['held_sale_id'] ?? null) {
                 $heldSale = DB::table('sales')->where('id', $data['held_sale_id'])
                     ->where('branch_code', $user->BC)->where('status', 'held')->lockForUpdate()->first();
                 if (! $heldSale) {
@@ -280,10 +280,10 @@ class GroceryService
             if ($heldSale) {
                 DB::table('sales')->where('id', $heldSale->id)->update([
                     'status' => 'voided', 'voided_by' => $user->id,
-                    'void_reason' => 'Resumed as '.DB::table('sales')->where('id', $saleId)->value('invoice_no'),
+                    'void_reason' => ($hold ? 'Paused again as ' : 'Resumed as ').DB::table('sales')->where('id', $saleId)->value('invoice_no'),
                     'updated_at' => now(),
                 ]);
-                $this->audit($user, 'resume', 'sale', $heldSale->id, null, $heldSale, ['completed_sale_id' => $saleId]);
+                $this->audit($user, $hold ? 'rehold' : 'resume', 'sale', $heldSale->id, null, $heldSale, [$hold ? 'replacement_held_sale_id' : 'completed_sale_id' => $saleId]);
             }
             $this->audit($user, $hold ? 'hold' : 'complete', 'sale', $saleId, null, null, ['total' => $grand]);
             return $this->saleDetail($user, $saleId);

@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Barcode, Banknote, CreditCard, Maximize2, Minimize2, Pause, Plus, Printer, ReceiptText, Search, ShoppingCart, Trash2, WalletCards } from 'lucide-react';
+import { Barcode, Banknote, CreditCard, Maximize2, Minimize2, Pause, Play, Plus, Printer, ReceiptText, Search, ShoppingCart, Trash2, WalletCards } from 'lucide-react';
 import { api, getApiErrorMessage } from '@/lib/api';
 import { GroceryOptions, GroceryProduct, GroceryUnit, PosLine, money as formatMoney, quantity } from '@/lib/grocery';
 import { OperationField, OperationHeader, OperationNotice } from '@/components/operation-ui';
@@ -28,6 +28,7 @@ export default function PointOfSalePage() {
   const [lastSale, setLastSale] = useState<{ id: number; invoice_no: string } | null>(null);
   const [heldSales, setHeldSales] = useState<Array<{ id: number; invoice_no: string; grand_total: number }>>([]);
   const [heldSaleId, setHeldSaleId] = useState<number | null>(null);
+  const [resumeOpen, setResumeOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const money = (value: number | string | null | undefined) => formatMoney(value, String(options?.company?.currency || 'LKR'));
@@ -64,6 +65,8 @@ export default function PointOfSalePage() {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key === 'F2') { event.preventDefault(); searchRef.current?.focus(); }
+      if (event.key === 'F6' && cart.length && !saving) { event.preventDefault(); void saveSale(true); }
+      if (event.key === 'F7' && heldSales.length) { event.preventDefault(); setResumeOpen((current) => !current); }
       if (event.key === 'F8') { event.preventDefault(); void completeSale(); }
     };
     window.addEventListener('keydown', handler);
@@ -153,6 +156,7 @@ export default function PointOfSalePage() {
   }
 
   async function resumeHeldSale(id: number) {
+    if (cart.length && !window.confirm('Resume this paused sale and replace the current basket?')) return;
     setSaving(true); setNotice(null);
     try {
       const response = await api.get<{ id: number; store_id: number; lines: Array<{ product_id: number; unit_id: number; quantity: number; unit_price: number; discount_total: number }> }>(`/v1/grocery/sales/${id}`);
@@ -164,7 +168,8 @@ export default function PointOfSalePage() {
         return product && unit ? [{ key: `${product.id}:${unit.unit_id}`, product, unit, quantity: Number(line.quantity), unitPrice: Number(line.unit_price), discount: Number(line.discount_total) }] : [];
       });
       setCart(resumed); setStoreId(Number(held.store_id)); setHeldSaleId(id);
-      setNotice({ type: 'success', text: 'Held basket resumed. Complete payment when ready.' });
+      setHeldSales((current) => current.filter((sale) => sale.id !== id)); setResumeOpen(false);
+      setNotice({ type: 'success', text: 'Paused sale resumed. Complete payment or pause it again.' });
       searchRef.current?.focus();
     } catch (error) { setNotice({ type: 'error', text: getApiErrorMessage(error, 'Could not resume the held sale.') }); }
     finally { setSaving(false); }
@@ -196,7 +201,7 @@ export default function PointOfSalePage() {
         ],
       };
       const response = await api.post<{ id: number; invoice_no: string }>(hold ? '/v1/grocery/pos/hold' : '/v1/grocery/pos/complete', body);
-      setNotice({ type: 'success', text: hold ? `Sale ${response.data?.invoice_no} held.` : `Sale ${response.data?.invoice_no} completed. Receipt is ready.` });
+      setNotice({ type: 'success', text: hold ? `Sale ${response.data?.invoice_no} paused.` : `Sale ${response.data?.invoice_no} completed. Receipt is ready.` });
       setLastSale(!hold && response.data ? { id: response.data.id, invoice_no: response.data.invoice_no } : null);
       setCart([]); setTendered(''); setSecondaryAmount(''); setSplitPayment(false); setHeldSaleId(null); await load();
     } catch (error) { setNotice({ type: 'error', text: getApiErrorMessage(error, 'Could not complete the sale.') }); }
@@ -214,12 +219,10 @@ export default function PointOfSalePage() {
 
   return (
     <div className={focusMode ? 'fixed inset-0 z-[100] overflow-y-auto bg-slate-100 p-3' : 'space-y-5'}>
-      {!focusMode && <OperationHeader eyebrow="Front counter" title="Point of sale" description="Scan, take payment, and move to the next customer. F2 focuses item search; F8 completes payment." icon={ShoppingCart} actions={<button onClick={() => void toggleFocusMode()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white"><Maximize2 className="h-4 w-4" /> Full-screen checkout</button>} />}
+      {!focusMode && <OperationHeader eyebrow="Front counter" title="Point of sale" description="Scan and serve continuously. F6 pauses, F7 opens paused sales, and F8 takes payment." icon={ShoppingCart} actions={<button onClick={() => void toggleFocusMode()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white"><Maximize2 className="h-4 w-4" /> Full-screen checkout</button>} />}
       {focusMode && <button onClick={() => void toggleFocusMode()} className="fixed right-5 top-5 z-[110] inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-800 shadow-xl ring-1 ring-slate-200"><Minimize2 className="h-4 w-4" /> Exit full screen</button>}
       {notice && <OperationNotice type={notice.type}>{notice.text}</OperationNotice>}
       {lastSale && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950"><span><strong>{lastSale.invoice_no}</strong> is complete and ready to print.</span><Link href={`/dashboard/sales/${lastSale.id}/receipt`} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 font-bold text-white"><Printer className="h-4 w-4" /> Print receipt</Link></div>}
-      {heldSales.length > 0 && <section className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-4"><span className="mr-2 text-xs font-bold uppercase tracking-wide text-slate-400">Held baskets</span>{heldSales.map((sale) => <button key={sale.id} onClick={() => void resumeHeldSale(sale.id)} disabled={saving} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs font-bold text-amber-950"><span>{sale.invoice_no}</span><span className="ml-2 font-normal text-amber-700">{money(sale.grand_total)}</span></button>)}</section>}
-
       {!options?.open_shift && (
         <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -271,7 +274,9 @@ export default function PointOfSalePage() {
             {splitPayment && <div className="mt-2 grid grid-cols-2 gap-2"><OperationField label="Second method"><select className={inputClass} value={secondaryMethod} onChange={(event) => setSecondaryMethod(event.target.value)}><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="mobile">Mobile / QR</option><option value="cash">Cash</option></select></OperationField><OperationField label="Second amount"><input className={inputClass} type="number" min="0.01" max={total} value={secondaryAmount} onChange={(event) => setSecondaryAmount(event.target.value)} /></OperationField></div>}
             {splitPayment && <div className="mt-2 flex justify-between rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-900"><span>Primary payment</span><span>{money(primaryDue)}</span></div>}
             {paymentMethod === 'cash' && <div className="mt-3 grid grid-cols-2 gap-2"><OperationField label="Cash received"><input className={inputClass} type="number" min={primaryDue} value={tendered} onChange={(event) => setTendered(event.target.value)} placeholder={primaryDue.toFixed(2)} /></OperationField><div className="rounded-xl bg-white p-3 ring-1 ring-slate-200"><p className="text-[11px] font-semibold uppercase text-slate-400">Change</p><p className="mt-1 font-black text-emerald-700">{money(change)}</p></div></div>}
-            <div className="mt-4 grid grid-cols-[auto_1fr] gap-2"><button title="Hold basket" disabled={!cart.length || saving || Boolean(heldSaleId)} onClick={() => void saveSale(true)} className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-600 disabled:opacity-40"><Pause className="h-4 w-4" /></button><button disabled={!cart.length || saving || !options?.open_shift || (splitPayment && secondaryDue <= 0)} onClick={() => void completeSale()} className="rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-lg disabled:opacity-40">{saving ? 'Processing…' : `Take payment · ${money(total)} (F8)`}</button></div>
+            {resumeOpen && <div className="mt-4 max-h-44 space-y-2 overflow-y-auto rounded-2xl border border-amber-200 bg-amber-50 p-3"><div className="flex items-center justify-between"><p className="text-xs font-black uppercase tracking-wide text-amber-950">Paused sales</p><span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-black text-amber-950">{heldSales.length}</span></div>{heldSales.map((sale) => <button key={sale.id} onClick={() => void resumeHeldSale(sale.id)} disabled={saving} className="flex w-full items-center justify-between rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-left text-xs font-bold text-amber-950 transition hover:border-amber-400 hover:bg-amber-100"><span>{sale.invoice_no}</span><span className="font-semibold text-amber-700">{money(sale.grand_total)}</span></button>)}</div>}
+            <div className="mt-4 grid grid-cols-2 gap-2"><button title={cart.length ? 'Pause this sale (F6)' : 'Add an item before pausing'} disabled={!cart.length || saving} onClick={() => void saveSale(true)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-black text-amber-950 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"><Pause className="h-4 w-4" /> Pause sale <span className="text-[10px] font-semibold text-amber-700">F6</span></button><button title={heldSales.length ? 'Resume a paused sale (F7)' : 'No paused sales'} disabled={!heldSales.length || saving} aria-expanded={resumeOpen} onClick={() => setResumeOpen((current) => !current)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-950 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><Play className="h-4 w-4" /> Resume sale <span className="rounded-full bg-emerald-200 px-1.5 py-0.5 text-[10px] font-black">{heldSales.length}</span></button></div>
+            <button disabled={!cart.length || saving || !options?.open_shift || (splitPayment && secondaryDue <= 0)} onClick={() => void completeSale()} className="mt-2 w-full rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-lg disabled:opacity-40">{saving ? 'Processing…' : `Take payment · ${money(total)} (F8)`}</button>
           </div>
         </aside>
       </div>

@@ -151,14 +151,23 @@ class GroceryWorkflowTest extends TestCase
         ])->assertOk()->json('data');
         $this->assertSame(5.0, $this->stock($product['id'], $this->storeId));
 
+        $pausedAgain = $this->postJson('/api/v1/grocery/pos/hold', [
+            'held_sale_id' => $held['id'], 'store_id' => $this->storeId,
+            'lines' => [['product_id' => $product['id'], 'unit_id' => $this->eachId, 'quantity' => 1]],
+            'payments' => [],
+        ])->assertOk()->json('data');
+        $this->assertDatabaseHas('sales', ['id' => $held['id'], 'status' => 'voided']);
+        $this->assertDatabaseHas('sales', ['id' => $pausedAgain['id'], 'status' => 'held']);
+        $this->assertDatabaseHas('audit_logs', ['entity_type' => 'sale', 'entity_id' => $held['id'], 'action' => 'rehold']);
+
         $shift = $this->postJson('/api/v1/grocery/shifts/open', ['register_id' => $this->registerId, 'opening_float' => 0])->json('data');
         $completed = $this->postJson('/api/v1/grocery/pos/complete', [
-            'held_sale_id' => $held['id'], 'store_id' => $this->storeId, 'shift_id' => $shift['id'],
+            'held_sale_id' => $pausedAgain['id'], 'store_id' => $this->storeId, 'shift_id' => $shift['id'],
             'lines' => [['product_id' => $product['id'], 'unit_id' => $this->eachId, 'quantity' => 1]],
             'payments' => [['method' => 'cash', 'amount' => 250]],
         ])->assertOk()->json('data');
 
-        $this->assertDatabaseHas('sales', ['id' => $held['id'], 'status' => 'voided']);
+        $this->assertDatabaseHas('sales', ['id' => $pausedAgain['id'], 'status' => 'voided']);
         $this->assertSame(4.0, $this->stock($product['id'], $this->storeId));
         $this->postJson("/api/v1/grocery/sales/{$completed['id']}/void", ['reason' => 'Cashier scanned wrong basket'])->assertOk();
         $this->assertSame(5.0, $this->stock($product['id'], $this->storeId));
