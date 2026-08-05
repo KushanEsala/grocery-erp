@@ -28,6 +28,7 @@ type ReceiptSale = {
   customer_name?: string | null;
   store_name?: string | null;
   register_name?: string | null;
+  cashier_name?: string | null;
   subtotal: number;
   discount_total: number;
   tax_total: number;
@@ -35,6 +36,7 @@ type ReceiptSale = {
   print_count: number;
   lines: ReceiptLine[];
   payments: ReceiptPayment[];
+  company?: { name?: string; address?: string; phone?: string; tax_number?: string; currency?: string; receipt_footer?: string; bilingual_receipts_enabled?: boolean; receipt_secondary_footer?: string } | null;
 };
 
 export default function ReceiptView({ saleId }: { saleId: string }) {
@@ -64,6 +66,7 @@ export default function ReceiptView({ saleId }: { saleId: string }) {
 
   if (error && !sale) return <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm font-semibold text-rose-800">{error}</div>;
   if (!sale) return <div className="p-10 text-center text-sm font-semibold text-slate-500">Loading receipt...</div>;
+  const receiptMoney = (value: number) => money(value, sale.company?.currency || 'LKR');
 
   return (
     <div className="mx-auto max-w-xl space-y-4">
@@ -74,27 +77,29 @@ export default function ReceiptView({ saleId }: { saleId: string }) {
       {error && <div className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700 print:hidden">{error}</div>}
       <article className="receipt-sheet mx-auto bg-white p-7 font-mono text-[12px] leading-relaxed text-slate-950 shadow-sm ring-1 ring-slate-200 print:p-0 print:shadow-none print:ring-0">
         <header className="text-center">
-          <h1 className="text-lg font-black tracking-tight">GROCERY ERP</h1>
-          <p>{sale.store_name || 'Grocery Shop'}</p>
+          <h1 className="text-lg font-black tracking-tight">{sale.company?.name || 'Grocery ERP'}</h1>
+          <p>{sale.company?.address || sale.store_name || 'Grocery Shop'}</p>
+          {sale.company?.phone && <p>{sale.company.phone}</p>}{sale.company?.tax_number && <p>Tax: {sale.company.tax_number}</p>}
           <p className="mt-2 text-[11px]">{sale.print_count > 1 ? `REPRINT COPY #${sale.print_count}` : 'SALES RECEIPT'}</p>
         </header>
         <div className="my-4 border-y border-dashed border-slate-500 py-3">
           <div className="flex justify-between"><span>Invoice</span><strong>{sale.invoice_no}</strong></div>
           <div className="flex justify-between"><span>Date</span><span>{new Date(sale.sold_at).toLocaleString()}</span></div>
           <div className="flex justify-between"><span>Register</span><span>{sale.register_name || '-'}</span></div>
+          <div className="flex justify-between"><span>Cashier</span><span>{sale.cashier_name || '-'}</span></div>
           <div className="flex justify-between"><span>Customer</span><span>{sale.customer_name || 'Walk-in Customer'}</span></div>
         </div>
         <div className="space-y-3">
-          {sale.lines.map((line) => <div key={line.id}><div className="font-bold">{line.description}</div><div className="flex justify-between"><span>{quantity(line.quantity)} {line.unit_code} x {money(line.unit_price)}</span><span>{money(line.line_total)}</span></div>{Number(line.discount_total) > 0 && <div className="flex justify-between text-[11px]"><span>Discount</span><span>-{money(line.discount_total)}</span></div>}</div>)}
+          {sale.lines.map((line) => <div key={line.id}><div className="font-bold">{line.description}</div><div className="flex justify-between"><span>{quantity(line.quantity)} {line.unit_code} x {receiptMoney(line.unit_price)}</span><span>{receiptMoney(line.line_total)}</span></div>{Number(line.discount_total) > 0 && <div className="flex justify-between text-[11px]"><span>Discount</span><span>-{receiptMoney(line.discount_total)}</span></div>}</div>)}
         </div>
         <div className="my-4 space-y-1 border-y border-dashed border-slate-500 py-3">
-          <div className="flex justify-between"><span>Subtotal</span><span>{money(sale.subtotal)}</span></div>
-          <div className="flex justify-between"><span>Discount</span><span>-{money(sale.discount_total)}</span></div>
-          <div className="flex justify-between"><span>Tax included/added</span><span>{money(sale.tax_total)}</span></div>
-          <div className="flex justify-between text-base font-black"><span>TOTAL</span><span>{money(sale.grand_total)}</span></div>
+          <div className="flex justify-between"><span>Subtotal</span><span>{receiptMoney(sale.subtotal)}</span></div>
+          <div className="flex justify-between"><span>Discount</span><span>-{receiptMoney(sale.discount_total)}</span></div>
+          <div className="flex justify-between"><span>Tax included/added</span><span>{receiptMoney(sale.tax_total)}</span></div>
+          <div className="flex justify-between text-base font-black"><span>TOTAL</span><span>{receiptMoney(sale.grand_total)}</span></div>
         </div>
-        <div className="space-y-1">{sale.payments.map((payment) => <div key={payment.id} className="flex justify-between"><span className="capitalize">{payment.method}</span><span>{money(payment.amount)}</span></div>)}</div>
-        <footer className="mt-6 text-center"><p>Thank you for shopping with us.</p><p className="mt-2 text-[10px]">Returns require this receipt and manager approval.</p></footer>
+        <div className="space-y-1">{sale.payments.map((payment) => <div key={payment.id} className="flex justify-between"><span className="capitalize">{payment.method.replaceAll('_',' ')}</span><span>{receiptMoney(payment.amount)}</span></div>)}</div>
+        <footer className="mt-6 whitespace-pre-line text-center"><p>{sale.company?.receipt_footer || 'Thank you for shopping with us.'}</p>{sale.company?.bilingual_receipts_enabled && sale.company.receipt_secondary_footer && <p className="mt-2">{sale.company.receipt_secondary_footer}</p>}<p className="mt-2 text-[10px]">Returns require this receipt and manager approval.</p></footer>
       </article>
     </div>
   );

@@ -24,7 +24,7 @@ export default function BrandsPage() {
           name: 'name',
           label: 'Brand name',
           required: true,
-          placeholder: 'e.g. Samsung',
+          placeholder: 'Brand name',
           span: 2,
         },
       ]}

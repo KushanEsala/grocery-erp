@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use App\Models\RolePermission;
 
 class GroceryController extends Controller
 {
@@ -30,6 +31,8 @@ class GroceryController extends Controller
             'brands' => DB::table('m_brands')->where('BC', $branch)->orderBy('name')->get(),
             'suppliers' => DB::table('suppliers')->where('BC', $branch)->orderBy('name')->get(),
             'customers' => DB::table('customers')->where('BC', $branch)->orderBy('name')->get(),
+            'promotions' => DB::table('promotions')->where(fn ($q) => $q->whereNull('branch_code')->orWhere('branch_code', $branch))->where('active', true)->get(),
+            'company' => DB::table('branch_dels as b')->leftJoin('companies as c', 'c.id', '=', 'b.company_id')->where('b.bccode', $branch)->select('c.*')->first() ?: DB::table('companies')->first(),
             'expense_categories' => DB::table('expense_categories')->where(fn ($q) => $q->whereNull('branch_code')->orWhere('branch_code', $branch))->where('active', true)->orderBy('name')->get(),
             'open_shift' => DB::table('cashier_shifts')->where('branch_code', $branch)->where('cashier_id', $request->user()->id)->where('status', 'open')->first(),
             'settings' => DB::table('app_settings')->where(fn ($q) => $q->whereNull('branch_code')->orWhere('branch_code', $branch))->pluck('value', 'key'),
@@ -93,36 +96,89 @@ class GroceryController extends Controller
         $product = DB::table('products')->where('id', $id)->where('branch_code', $request->user()->BC)->first();
         if (! $product) abort(404);
         $data = $request->validate([
-            'name' => ['sometimes', 'required', 'string', 'max:150'], 'local_name' => ['nullable', 'string', 'max:150'],
+            'sku' => ['sometimes', 'required', 'string', 'max:50'], 'name' => ['sometimes', 'required', 'string', 'max:150'],
+            'local_name' => ['nullable', 'string', 'max:150'], 'description' => ['nullable', 'string'],
+            'category_id' => ['nullable', 'integer', 'exists:categories,id'], 'brand_id' => ['nullable', 'integer', 'exists:m_brands,id'],
+            'base_unit_id' => ['sometimes', 'integer', 'exists:units,id'], 'tax_rate_id' => ['nullable', 'integer', 'exists:tax_rates,id'],
+            'preferred_supplier_id' => ['nullable', 'integer', 'exists:suppliers,id'],
             'retail_price' => ['sometimes', 'numeric', 'min:0'], 'wholesale_price' => ['nullable', 'numeric', 'min:0'],
-            'reorder_level' => ['sometimes', 'numeric', 'min:0'], 'active' => ['sometimes', 'boolean'],
-            'shelf_location' => ['nullable', 'string', 'max:80'],
+            'latest_cost' => ['sometimes', 'numeric', 'min:0'], 'reorder_level' => ['sometimes', 'numeric', 'min:0'],
+            'batch_tracked' => ['sometimes', 'boolean'], 'expiry_tracked' => ['sometimes', 'boolean'],
+            'weighted' => ['sometimes', 'boolean'], 'allow_decimal_qty' => ['sometimes', 'boolean'], 'active' => ['sometimes', 'boolean'],
+            'shelf_location' => ['nullable', 'string', 'max:80'], 'barcodes' => ['sometimes', 'array'],
+            'barcodes.*' => ['string', 'max:80', 'distinct'],
         ]);
-        DB::table('products')->where('id', $id)->update([...$data, 'updated_at' => now()]);
-        $this->grocery->audit($request->user(), 'update', 'product', $id, $request->input('reason'), $product, $data);
-        return $this->ok(DB::table('products')->find($id), 'Product updated.');
+        DB::transaction(function () use ($request, $id, $product, $data) {
+            if (isset($data['sku']) && DB::table('products')->where('branch_code', $request->user()->BC)->where('sku', $data['sku'])->where('id', '!=', $id)->exists()) {
+                throw ValidationException::withMessages(['sku' => 'SKU is already used in this branch.']);
+            }
+            if (array_key_exists('barcodes', $data)) {
+                foreach ($data['barcodes'] as $barcode) {
+                    if (DB::table('product_barcodes')->where('barcode', trim($barcode))->where('product_id', '!=', $id)->exists()) {
+                        throw ValidationException::withMessages(['barcodes' => "Barcode {$barcode} is already assigned to another product."]);
+                    }
+                }
+                DB::table('product_barcodes')->where('product_id', $id)->delete();
+                foreach (array_values($data['barcodes']) as $index => $barcode) DB::table('product_barcodes')->insert([
+                    'product_id' => $id, 'barcode' => trim($barcode), 'primary' => $index === 0, 'created_at' => now(), 'updated_at' => now(),
+                ]);
+            }
+            $productData = collect($data)->except('barcodes')->all();
+            DB::table('products')->where('id', $id)->update([...$productData, 'updated_at' => now()]);
+            if (isset($data['retail_price']) || isset($data['latest_cost']) || isset($data['base_unit_id'])) {
+                $baseUnit = (int) ($data['base_unit_id'] ?? $product->base_unit_id);
+                DB::table('product_units')->updateOrInsert(
+                    ['product_id' => $id, 'unit_id' => $baseUnit],
+                    ['conversion_factor' => 1, 'selling_price' => $data['retail_price'] ?? $product->retail_price,
+                        'purchase_cost' => $data['latest_cost'] ?? $product->latest_cost, 'can_sell' => true, 'can_purchase' => true,
+                        'created_at' => now(), 'updated_at' => now()]
+                );
+            }
+            $this->grocery->audit($request->user(), 'update', 'product', $id, $request->input('reason'), $product, $data);
+        });
+        return $this->ok(collect($this->grocery->catalog($request->user()))->firstWhere('id', $id), 'Product updated.');
+    }
+
+    public function destroyProduct(Request $request, int $id)
+    {
+        $product = DB::table('products')->where('id', $id)->where('branch_code', $request->user()->BC)->first();
+        if (! $product) abort(404);
+        $used = DB::table('inventory_movements')->where('product_id', $id)->exists()
+            || DB::table('sale_lines')->where('product_id', $id)->exists()
+            || DB::table('goods_receipt_lines')->where('product_id', $id)->exists();
+        if ($used) {
+            DB::table('products')->where('id', $id)->update(['active' => false, 'updated_at' => now()]);
+            $this->grocery->audit($request->user(), 'deactivate', 'product', $id, 'Product has transaction history');
+            return $this->ok(null, 'Product has transaction history and was deactivated instead of deleted.');
+        }
+        DB::table('products')->where('id', $id)->delete();
+        $this->grocery->audit($request->user(), 'delete', 'product', $id, null, $product, null);
+        return $this->ok(null, 'Product deleted.');
     }
 
     public function masterIndex(Request $request, string $resource)
     {
+        $this->authorizeMaster($request, $resource, 'can_read');
         [$table, $branchColumn] = $this->masterResource($resource);
         $query = DB::table($table);
         if ($branchColumn) $query->where(fn ($q) => $q->whereNull($branchColumn)->orWhere($branchColumn, $request->user()->BC));
-        if ($search = $request->query('search')) $query->where('name', 'like', "%{$search}%");
+        if ($search = $request->query('search')) {
+            $query->where(function ($builder) use ($resource, $search) {
+                if ($resource === 'sequences') {
+                    $builder->where('document_type', 'like', "%{$search}%")->orWhere('prefix', 'like', "%{$search}%");
+                } else {
+                    $builder->where('name', 'like', "%{$search}%");
+                }
+            });
+        }
         return $this->ok($query->orderBy('id', 'desc')->paginate(min(100, max(10, $request->integer('per_page', 25)))));
     }
 
     public function masterStore(Request $request, string $resource)
     {
+        $this->authorizeMaster($request, $resource, 'can_create');
         [$table, $branchColumn] = $this->masterResource($resource);
-        $rules = match ($resource) {
-            'units' => ['code' => ['required', 'string', 'max:20', 'unique:units,code'], 'name' => ['required', 'string', 'max:50'], 'decimal_places' => ['integer', 'between:0,6'], 'active' => ['boolean']],
-            'tax-rates' => ['name' => ['required', 'string', 'max:50'], 'rate' => ['required', 'numeric', 'between:0,100'], 'inclusive' => ['boolean'], 'active' => ['boolean']],
-            'registers' => ['code' => ['required', 'string', 'max:30'], 'name' => ['required', 'string', 'max:80'], 'store_id' => ['required', 'integer', 'exists:stores,id'], 'active' => ['boolean']],
-            'promotions' => ['name' => ['required', 'string', 'max:120'], 'type' => ['required', Rule::in(['percentage','fixed','price','buy_x_get_y','quantity_break'])], 'target_type' => ['required', Rule::in(['product','category','brand','basket'])], 'target_id' => ['nullable', 'integer'], 'value' => ['required', 'numeric', 'min:0'], 'minimum_qty' => ['nullable', 'numeric', 'min:0'], 'minimum_subtotal' => ['nullable', 'numeric', 'min:0'], 'buy_qty' => ['nullable', 'numeric', 'min:0'], 'get_qty' => ['nullable', 'numeric', 'min:0'], 'priority' => ['integer', 'min:0'], 'stackable' => ['boolean'], 'starts_at' => ['required', 'date'], 'ends_at' => ['required', 'date', 'after:starts_at'], 'active' => ['boolean']],
-            'expense-categories' => ['name' => ['required', 'string', 'max:100'], 'active' => ['boolean']],
-            default => [],
-        };
+        $rules = $this->masterRules($resource);
         $data = $request->validate($rules);
         if ($resource === 'registers' && ! DB::table('stores')->where('id', $data['store_id'])->where('BC', $request->user()->BC)->exists()) throw ValidationException::withMessages(['store_id' => 'Store is outside your branch.']);
         if ($branchColumn) $data[$branchColumn] = $request->user()->BC;
@@ -131,14 +187,72 @@ class GroceryController extends Controller
         return $this->ok(DB::table($table)->find($id), 'Saved.');
     }
 
+    public function masterUpdate(Request $request, string $resource, int $id)
+    {
+        $this->authorizeMaster($request, $resource, 'can_update');
+        [$table, $branchColumn] = $this->masterResource($resource);
+        $record = DB::table($table)->where('id', $id)->when($branchColumn, fn ($q) => $q->where($branchColumn, $request->user()->BC))->first();
+        if (! $record) abort(404);
+        $data = $request->validate($this->masterRules($resource, $id));
+        if ($resource === 'registers' && isset($data['store_id']) && ! DB::table('stores')->where('id', $data['store_id'])->where('BC', $request->user()->BC)->exists()) throw ValidationException::withMessages(['store_id' => 'Store is outside your branch.']);
+        DB::table($table)->where('id', $id)->update([...$data, 'updated_at' => now()]);
+        $this->grocery->audit($request->user(), 'update', $resource, $id, null, $record, $data);
+        return $this->ok(DB::table($table)->find($id), 'Updated.');
+    }
+
+    public function masterDestroy(Request $request, string $resource, int $id)
+    {
+        $this->authorizeMaster($request, $resource, 'can_delete');
+        [$table, $branchColumn] = $this->masterResource($resource);
+        $record = DB::table($table)->where('id', $id)->when($branchColumn, fn ($q) => $q->where($branchColumn, $request->user()->BC))->first();
+        if (! $record) abort(404);
+        try { DB::table($table)->where('id', $id)->delete(); }
+        catch (\Illuminate\Database\QueryException $exception) {
+            if ($exception->getCode() === '23000') throw ValidationException::withMessages(['record' => 'This record is in use and cannot be deleted. Deactivate it instead.']);
+            throw $exception;
+        }
+        $this->grocery->audit($request->user(), 'delete', $resource, $id, null, $record, null);
+        return $this->ok(null, 'Deleted.');
+    }
+
+    private function masterRules(string $resource, ?int $id = null): array
+    {
+        return match ($resource) {
+            'units' => ['code' => ['required', 'string', 'max:20', Rule::unique('units', 'code')->ignore($id)], 'name' => ['required', 'string', 'max:50'], 'decimal_places' => ['integer', 'between:0,6'], 'active' => ['boolean']],
+            'tax-rates' => ['name' => ['required', 'string', 'max:50'], 'rate' => ['required', 'numeric', 'between:0,100'], 'inclusive' => ['boolean'], 'active' => ['boolean']],
+            'registers' => ['code' => ['required', 'string', 'max:30'], 'name' => ['required', 'string', 'max:80'], 'store_id' => ['required', 'integer', 'exists:stores,id'], 'active' => ['boolean']],
+            'promotions' => ['name' => ['required', 'string', 'max:120'], 'type' => ['required', Rule::in(['percentage','fixed','price','buy_x_get_y','quantity_break'])], 'target_type' => ['required', Rule::in(['product','category','brand','basket'])], 'target_id' => ['nullable', 'integer'], 'value' => ['required', 'numeric', 'min:0'], 'minimum_qty' => ['nullable', 'numeric', 'min:0'], 'minimum_subtotal' => ['nullable', 'numeric', 'min:0'], 'buy_qty' => ['nullable', 'numeric', 'min:0'], 'get_qty' => ['nullable', 'numeric', 'min:0'], 'priority' => ['integer', 'min:0'], 'stackable' => ['boolean'], 'starts_at' => ['required', 'date'], 'ends_at' => ['required', 'date', 'after:starts_at'], 'active' => ['boolean']],
+            'expense-categories' => ['name' => ['required', 'string', 'max:100'], 'active' => ['boolean']],
+            'accounts' => ['code' => ['required', 'string', 'max:30', Rule::unique('chart_accounts', 'code')->ignore($id)->where('branch_code', request()->user()->BC)], 'name' => ['required', 'string', 'max:120'], 'type' => ['required', Rule::in(['asset','liability','equity','income','expense'])], 'parent_id' => ['nullable', 'integer', 'exists:chart_accounts,id'], 'active' => ['boolean']],
+            'sequences' => ['document_type' => ['required', Rule::in(['sale','return','shift','purchase_order','goods_receipt','purchase_return','transfer','adjustment','stock_count','supplier_payment','customer_payment','expense']), Rule::unique('document_sequences', 'document_type')->ignore($id)->where('branch_code', request()->user()->BC)], 'prefix' => ['required', 'string', 'max:20'], 'next_number' => ['required', 'integer', 'min:1']],
+            default => [],
+        };
+    }
+
     private function masterResource(string $resource): array
     {
         return match ($resource) {
             'units' => ['units', null], 'tax-rates' => ['tax_rates', null],
             'registers' => ['registers', 'branch_code'], 'promotions' => ['promotions', 'branch_code'],
             'expense-categories' => ['expense_categories', 'branch_code'],
+            'accounts' => ['chart_accounts', 'branch_code'],
+            'sequences' => ['document_sequences', 'branch_code'],
             default => abort(404),
         };
+    }
+
+    private function authorizeMaster(Request $request, string $resource, string $action): void
+    {
+        if ($request->user()->isSuperAdmin()) return;
+        $module = match ($resource) {
+            'units' => 'units', 'tax-rates' => 'taxes', 'registers' => 'registers',
+            'promotions' => 'promotions', 'expense-categories' => 'expenses', 'accounts' => 'accounts',
+            'sequences' => 'settings',
+            default => abort(404),
+        };
+        if (! RolePermission::where('role_id', $request->user()->role_id)->where('module', $module)->where($action, true)->exists()) {
+            abort(403, "You do not have permission to {$action} {$module}.");
+        }
     }
 
     public function shifts(Request $request)
@@ -255,7 +369,9 @@ class GroceryController extends Controller
         $data = $request->validate([
             'supplier_id' => ['required', 'integer'], 'store_id' => ['required', 'integer'], 'order_date' => ['required', 'date'],
             'expected_date' => ['nullable', 'date', 'after_or_equal:order_date'], 'notes' => ['nullable', 'string'],
-            'lines' => ['required', 'array', 'min:1'], 'lines.*.product_id' => ['required', 'integer'], 'lines.*.unit_id' => ['required', 'integer'],
+            'lines' => ['required', 'array', 'min:1'],
+            'lines.*.product_id' => ['required', 'integer', 'min:1', Rule::exists('products', 'id')->where('branch_code', $request->user()->BC)],
+            'lines.*.unit_id' => ['required', 'integer', 'min:1', 'exists:units,id'],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'], 'lines.*.free_quantity' => ['nullable', 'numeric', 'min:0'],
             'lines.*.unit_cost' => ['required', 'numeric', 'min:0'], 'lines.*.discount' => ['nullable', 'numeric', 'min:0'], 'lines.*.tax' => ['nullable', 'numeric', 'min:0'],
         ]);
@@ -264,6 +380,9 @@ class GroceryController extends Controller
             if (! DB::table('suppliers')->where('id', $data['supplier_id'])->where('BC', $user->BC)->exists() || ! DB::table('stores')->where('id', $data['store_id'])->where('BC', $user->BC)->exists()) throw ValidationException::withMessages(['supplier_id' => 'Supplier or store is outside your branch.']);
             $subtotal = $discount = $tax = 0.0; $lines = [];
             foreach ($data['lines'] as $line) {
+                if (! DB::table('product_units')->where('product_id', $line['product_id'])->where('unit_id', $line['unit_id'])->exists()) {
+                    throw ValidationException::withMessages(['lines' => 'The selected purchase unit is not configured for one of the products.']);
+                }
                 $gross = (float) $line['quantity'] * (float) $line['unit_cost'];
                 $lineDiscount = min($gross, (float) ($line['discount'] ?? 0)); $lineTax = (float) ($line['tax'] ?? 0);
                 $lines[] = [...$line, 'line_total' => round($gross - $lineDiscount + $lineTax, 2)];
@@ -302,8 +421,9 @@ class GroceryController extends Controller
         $data = $request->validate([
             'purchase_order_id' => ['nullable', 'integer'], 'supplier_id' => ['required', 'integer'], 'store_id' => ['required', 'integer'],
             'supplier_invoice_no' => ['required', 'string', 'max:100'], 'supplier_invoice_date' => ['required', 'date'], 'credit_purchase' => ['boolean'],
-            'lines' => ['required', 'array', 'min:1'], 'lines.*.purchase_order_line_id' => ['nullable', 'integer'], 'lines.*.product_id' => ['required', 'integer'],
-            'lines.*.unit_id' => ['required', 'integer'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'], 'lines.*.free_quantity' => ['nullable', 'numeric', 'min:0'],
+            'lines' => ['required', 'array', 'min:1'], 'lines.*.purchase_order_line_id' => ['nullable', 'integer'],
+            'lines.*.product_id' => ['required', 'integer', 'min:1', Rule::exists('products', 'id')->where('branch_code', $request->user()->BC)],
+            'lines.*.unit_id' => ['required', 'integer', 'min:1', 'exists:units,id'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'], 'lines.*.free_quantity' => ['nullable', 'numeric', 'min:0'],
             'lines.*.accepted_quantity' => ['nullable', 'numeric', 'min:0'], 'lines.*.rejected_quantity' => ['nullable', 'numeric', 'min:0'],
             'lines.*.unit_cost' => ['required', 'numeric', 'min:0'], 'lines.*.selling_price' => ['nullable', 'numeric', 'min:0'],
             'lines.*.batch_no' => ['nullable', 'string', 'max:80'], 'lines.*.manufactured_date' => ['nullable', 'date'], 'lines.*.expiry_date' => ['nullable', 'date'],
@@ -386,16 +506,91 @@ class GroceryController extends Controller
 
     public function supplierPayment(Request $request)
     {
-        $data = $request->validate(['supplier_id' => ['required', 'integer'], 'payment_date' => ['required', 'date'], 'amount' => ['required', 'numeric', 'gt:0'], 'method' => ['required', Rule::in(['cash','card','bank_transfer','cheque'])], 'reference' => ['nullable', 'string', 'max:100']]);
+        $data = $request->validate([
+            'supplier_id' => ['required', 'integer'], 'payment_date' => ['required', 'date'], 'amount' => ['required', 'numeric', 'gt:0'],
+            'method' => ['required', Rule::in(['cash','card','bank_transfer','cheque'])], 'reference' => ['nullable', 'string', 'max:100'],
+            'cheque_no' => ['nullable', 'required_if:method,cheque', 'string', 'max:80'],
+            'bank_name' => ['nullable', 'required_if:method,cheque', 'string', 'max:120'],
+            'cheque_date' => ['nullable', 'required_if:method,cheque', 'date'],
+        ]);
         $user = $request->user();
         $payment = DB::transaction(function () use ($data, $user) {
             if (! DB::table('suppliers')->where('id', $data['supplier_id'])->where('BC', $user->BC)->exists()) throw ValidationException::withMessages(['supplier_id' => 'Supplier is outside your branch.']);
+            if ($data['method'] === 'cheque') {
+                $enabled = (bool) (DB::table('branch_dels as b')->leftJoin('companies as c', 'c.id', '=', 'b.company_id')->where('b.bccode', $user->BC)->value('c.post_dated_cheques_enabled') ?? false);
+                if (! $enabled) throw ValidationException::withMessages(['method' => 'Post-dated cheques are disabled in Company Settings.']);
+            }
             $number = $this->grocery->nextNumber($user->BC, 'supplier_payment');
-            $id = DB::table('grocery_supplier_payments')->insertGetId([...$data, 'payment_no' => $number, 'branch_code' => $user->BC, 'status' => 'posted', 'created_by' => $user->id, 'created_at' => now(), 'updated_at' => now()]);
+            $paymentData = collect($data)->only(['supplier_id','payment_date','amount','method','reference'])->all();
+            $id = DB::table('grocery_supplier_payments')->insertGetId([...$paymentData, 'payment_no' => $number, 'branch_code' => $user->BC, 'status' => 'posted', 'created_by' => $user->id, 'created_at' => now(), 'updated_at' => now()]);
+            if ($data['method'] === 'cheque') DB::table('payment_cheques')->insert([
+                'branch_code' => $user->BC, 'direction' => 'outgoing', 'reference_type' => 'supplier_payment', 'reference_id' => $id,
+                'cheque_no' => $data['cheque_no'], 'bank_name' => $data['bank_name'], 'cheque_date' => $data['cheque_date'],
+                'amount' => $data['amount'], 'status' => 'pending', 'created_by' => $user->id, 'created_at' => now(), 'updated_at' => now(),
+            ]);
             DB::table('supplier_account_entries')->insert(['branch_code' => $user->BC, 'supplier_id' => $data['supplier_id'], 'reference_type' => 'supplier_payment', 'reference_no' => $number, 'entry_date' => $data['payment_date'], 'debit' => $data['amount'], 'credit' => 0, 'created_by' => $user->id, 'created_at' => now(), 'updated_at' => now()]);
             $this->grocery->audit($user, 'post', 'supplier_payment', $id, null, null, $data); return DB::table('grocery_supplier_payments')->find($id);
         });
         return $this->ok($payment, 'Supplier payment posted.');
+    }
+
+    public function cheques(Request $request)
+    {
+        return $this->ok(DB::table('payment_cheques')->where('branch_code', $request->user()->BC)->orderBy('cheque_date')->paginate(100));
+    }
+
+    public function updateCheque(Request $request, int $id)
+    {
+        $data = $request->validate(['status' => ['required', Rule::in(['cleared','returned','cancelled'])], 'reason' => ['required', 'string', 'max:255']]);
+        $cheque = DB::table('payment_cheques')->where('id', $id)->where('branch_code', $request->user()->BC)->first();
+        if (! $cheque || $cheque->status !== 'pending') throw ValidationException::withMessages(['cheque' => 'Only pending cheques can be updated.']);
+        DB::table('payment_cheques')->where('id', $id)->update(['status' => $data['status'], 'updated_by' => $request->user()->id, 'updated_at' => now()]);
+        $this->grocery->audit($request->user(), $data['status'], 'payment_cheque', $id, $data['reason'], $cheque, ['status' => $data['status']]);
+        return $this->ok(DB::table('payment_cheques')->find($id), 'Cheque status updated.');
+    }
+
+    public function customerAccounts(Request $request)
+    {
+        return $this->ok(DB::table('customers as c')
+            ->leftJoin('customer_account_entries as e', 'e.customer_id', '=', 'c.id')
+            ->where('c.BC', $request->user()->BC)
+            ->select('c.id', 'c.Code as code', 'c.name', 'c.phone', 'c.credit_limit', 'c.advance_balance', 'c.active')
+            ->selectRaw('COALESCE(SUM(e.debit - e.credit), 0) as credit_balance')
+            ->groupBy('c.id', 'c.Code', 'c.name', 'c.phone', 'c.credit_limit', 'c.advance_balance', 'c.active')
+            ->orderBy('c.name')->paginate(100));
+    }
+
+    public function customerPayment(Request $request)
+    {
+        $data = $request->validate([
+            'customer_id' => ['required', 'integer'], 'payment_date' => ['required', 'date'],
+            'amount' => ['required', 'numeric', 'gt:0'],
+            'method' => ['required', Rule::in(['cash','card','bank_transfer','mobile'])],
+            'reference' => ['nullable', 'string', 'max:100'],
+        ]);
+        $user = $request->user();
+        $result = DB::transaction(function () use ($data, $user) {
+            $company = DB::table('branch_dels as b')->leftJoin('companies as c', 'c.id', '=', 'b.company_id')
+                ->where('b.bccode', $user->BC)->select('c.customer_credit_enabled')->first();
+            if (! $company?->customer_credit_enabled) throw ValidationException::withMessages(['customer_id' => 'Customer credit is disabled in Company Settings.']);
+            $customer = DB::table('customers')->where('id', $data['customer_id'])->where('BC', $user->BC)->where('active', true)->lockForUpdate()->first();
+            if (! $customer) throw ValidationException::withMessages(['customer_id' => 'Select an active customer in your branch.']);
+            $balance = max(0, (float) DB::table('customer_account_entries')->where('customer_id', $customer->id)->sum(DB::raw('debit - credit')));
+            $amount = round((float) $data['amount'], 2); $applied = round(min($balance, $amount), 2); $advance = round($amount - $applied, 2);
+            $number = $this->grocery->nextNumber($user->BC, 'customer_payment');
+            $entryId = null;
+            if ($applied > 0) $entryId = DB::table('customer_account_entries')->insertGetId([
+                'branch_code' => $user->BC, 'customer_id' => $customer->id, 'reference_type' => 'customer_payment',
+                'reference_no' => $number, 'entry_date' => $data['payment_date'], 'debit' => 0, 'credit' => $applied,
+                'created_by' => $user->id, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            if ($advance > 0) DB::table('customers')->where('id', $customer->id)->increment('advance_balance', $advance, ['updated_at' => now()]);
+            $result = ['id' => $entryId, 'payment_no' => $number, 'customer_id' => $customer->id, 'amount' => $amount,
+                'applied_to_credit' => $applied, 'added_store_credit' => $advance, 'method' => $data['method'], 'reference' => $data['reference'] ?? null];
+            $this->grocery->audit($user, 'post', 'customer_payment', $entryId ?? $customer->id, null, null, $result);
+            return $result;
+        });
+        return $this->ok($result, 'Customer payment recorded.');
     }
 
     public function dashboard(Request $request) { return $this->ok($this->grocery->dashboard($request->user(), $request->query('from'), $request->query('to'))); }

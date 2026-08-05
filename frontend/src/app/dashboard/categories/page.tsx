@@ -73,7 +73,7 @@ export default function CategoriesPage() {
           name: 'name',
           label: 'Category name',
           required: true,
-          placeholder: 'e.g. Electronics',
+          placeholder: 'Category name',
           span: 2,
         },
         {

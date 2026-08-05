@@ -22,6 +22,7 @@ class SystemBackupService
             'companies', 'branch_dels', 'roles', 'role_permissions', 'users', 'stores',
             'categories', 'm_brands', 'customers', 'suppliers', 'units', 'tax_rates',
             'registers', 'products', 'product_barcodes', 'product_units', 'expense_categories',
+            'chart_accounts',
         ],
         'inventory' => [
             'product_batches', 'inventory_movements', 'grocery_stock_transfers',
@@ -32,6 +33,7 @@ class SystemBackupService
             'grocery_purchase_orders', 'grocery_purchase_order_lines', 'goods_receipts',
             'goods_receipt_lines', 'purchase_returns', 'purchase_return_lines',
             'grocery_supplier_payments', 'supplier_account_entries',
+            'payment_cheques', 'customer_account_entries',
         ],
         'sales' => [
             'sales', 'sale_lines', 'sale_payments', 'sales_returns', 'sales_return_lines',
@@ -55,6 +57,7 @@ class SystemBackupService
         'stock_adjustment_lines', 'stock_adjustments', 'grocery_stock_transfer_lines',
         'grocery_stock_transfers', 'inventory_movements', 'product_batches', 'cash_movements',
         'cashier_shifts', 'grocery_expenses', 'audit_logs',
+        'payment_cheques', 'customer_account_entries',
     ];
 
     public function listBackups(): array
@@ -286,10 +289,13 @@ class SystemBackupService
                         try {
                             $headers = fgetcsv($stream);
                             if (! is_array($headers)) continue;
+                            $validColumns = array_flip(Schema::getColumnListing($table));
                             $batch = [];
                             while (($values = fgetcsv($stream)) !== false) {
                                 $row = [];
-                                foreach ($headers as $index => $column) $row[$column] = ($values[$index] ?? '') === '' ? null : $values[$index];
+                                foreach ($headers as $index => $column) {
+                                    if (isset($validColumns[$column])) $row[$column] = ($values[$index] ?? '') === '' ? null : $values[$index];
+                                }
                                 $batch[] = $row; $rows++;
                                 if (count($batch) >= 250) { DB::table($table)->insert($batch); $batch = []; }
                             }

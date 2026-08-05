@@ -6,6 +6,7 @@ use App\Models\User;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -72,7 +73,7 @@ class GroceryWorkflowTest extends TestCase
     public function test_goods_receipt_tracks_batch_expiry_and_fefo_sale(): void
     {
         $supplierId = DB::table('suppliers')->insertGetId([
-            'Code' => 'SUP-01', 'name' => 'Fresh Foods', 'type' => 'normal', 'BC' => 'HQ', 'UID' => 'admin', 'created_at' => now(),
+            'Code' => 'SUP-01', 'name' => 'Fresh Foods', 'BC' => 'HQ', 'UID' => 'admin', 'created_at' => now(),
         ]);
         $product = $this->createProduct('MILK-001', 'Fresh Milk', '890100000002', true);
 
@@ -170,6 +171,100 @@ class GroceryWorkflowTest extends TestCase
         $this->getJson('/api/v1/grocery/reports/inventory')->assertOk();
         $this->getJson('/api/v1/hp')->assertNotFound();
         $this->getJson('/api/v1/service-tickets')->assertNotFound();
+    }
+
+    public function test_purchase_order_rejects_invalid_picker_values_and_preserves_product_prices(): void
+    {
+        $supplierId = DB::table('suppliers')->insertGetId([
+            'Code' => 'SUP-PO', 'name' => 'Daily Grocery Supply', 'BC' => 'HQ', 'UID' => 'admin',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $product = $this->createProduct('FLOUR-001', 'Wheat Flour 1kg', '479100000001');
+
+        $payload = [
+            'supplier_id' => $supplierId, 'store_id' => $this->storeId,
+            'order_date' => today()->toDateString(),
+            'lines' => [['product_id' => 0, 'unit_id' => 0, 'quantity' => 10, 'unit_cost' => 120]],
+        ];
+        $this->postJson('/api/v1/grocery/purchase-orders', $payload)
+            ->assertUnprocessable()->assertJsonValidationErrors(['lines.0.product_id', 'lines.0.unit_id']);
+        $this->assertDatabaseCount('grocery_purchase_orders', 0);
+
+        $payload['lines'][0] = ['product_id' => $product['id'], 'unit_id' => $this->eachId, 'quantity' => 10, 'unit_cost' => 120];
+        $this->postJson('/api/v1/grocery/purchase-orders', $payload)
+            ->assertOk()->assertJsonPath('data.grand_total', '1200.00');
+
+        $this->putJson("/api/v1/grocery/products/{$product['id']}", [
+            'latest_cost' => 175.50, 'retail_price' => 289.90, 'base_unit_id' => $this->eachId,
+        ])->assertOk();
+        $catalogue = collect($this->getJson('/api/v1/grocery/products')->assertOk()->json('data'));
+        $saved = $catalogue->firstWhere('id', $product['id']);
+        $this->assertSame(175.5, (float) $saved['latest_cost']);
+        $this->assertSame(289.9, (float) $saved['retail_price']);
+        $this->assertSame(175.5, (float) $saved['units'][0]['purchase_cost']);
+        $this->assertSame(289.9, (float) $saved['units'][0]['selling_price']);
+    }
+
+    public function test_company_features_tax_numbering_credit_and_cheque_lifecycle_are_configurable(): void
+    {
+        $this->assertFalse(Schema::hasColumn('suppliers', 'type'));
+        $companyId = (int) DB::table('companies')->value('id');
+        $this->putJson("/api/v1/companies/{$companyId}", [
+            'currency' => 'LKR', 'timezone' => 'Asia/Colombo', 'receipt_footer' => 'Thank you for shopping with us.',
+            'customer_credit_enabled' => true, 'post_dated_cheques_enabled' => true, 'accounting_enabled' => true,
+            'bilingual_receipts_enabled' => true, 'secondary_language' => 'si', 'receipt_secondary_footer' => 'ස්තුතියි',
+            'scale_barcode_prefix' => '20', 'scale_product_digits' => 5, 'scale_weight_digits' => 5,
+            'cash_drawer_enabled' => true, 'cash_drawer_command' => 'ESC/POS',
+            'label_printer_enabled' => true, 'label_printer_name' => 'Grocery Labels', 'receipt_printer_name' => 'POS Receipt',
+        ])->assertOk()->assertJsonPath('data.customer_credit_enabled', true);
+
+        $tax = $this->postJson('/api/v1/grocery/masters/tax-rates', [
+            'name' => 'VAT 18', 'rate' => 18, 'inclusive' => true, 'active' => true,
+        ])->assertOk()->json('data');
+        $this->putJson("/api/v1/grocery/masters/tax-rates/{$tax['id']}", [
+            'name' => 'VAT 15', 'rate' => 15, 'inclusive' => true, 'active' => true,
+        ])->assertOk()->assertJsonPath('data.rate', '15.0000');
+
+        $sequence = DB::table('document_sequences')->where('branch_code', 'HQ')->where('document_type', 'sale')->first();
+        $this->putJson("/api/v1/grocery/masters/sequences/{$sequence->id}", [
+            'document_type' => 'sale', 'prefix' => 'POS-', 'next_number' => 300,
+        ])->assertOk()->assertJsonPath('data.next_number', 300);
+
+        $supplierId = DB::table('suppliers')->insertGetId([
+            'Code' => 'SUP-PDC', 'name' => 'Cheque Supplier', 'BC' => 'HQ', 'UID' => 'admin',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->postJson('/api/v1/grocery/supplier-payments', [
+            'supplier_id' => $supplierId, 'payment_date' => today()->toDateString(), 'amount' => 5000,
+            'method' => 'cheque', 'reference' => 'PDC-TEST', 'cheque_no' => '000123',
+            'bank_name' => 'Test Bank', 'cheque_date' => today()->addWeek()->toDateString(),
+        ])->assertOk();
+        $chequeId = (int) DB::table('payment_cheques')->value('id');
+        $this->patchJson("/api/v1/grocery/cheques/{$chequeId}", ['status' => 'cleared', 'reason' => 'Bank confirmed'])
+            ->assertOk()->assertJsonPath('data.status', 'cleared');
+
+        $customerId = DB::table('customers')->insertGetId([
+            'Code' => 'CUS-CREDIT', 'name' => 'Credit Customer', 'credit_limit' => 1000,
+            'BC' => 'HQ', 'UID' => 'admin', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $product = $this->createProduct('SUGAR-001', 'White Sugar 1kg', '479100000002');
+        $this->postJson('/api/v1/grocery/stock-adjustments', [
+            'store_id' => $this->storeId, 'reason' => 'opening',
+            'lines' => [['product_id' => $product['id'], 'quantity_delta' => 5]],
+        ])->assertOk();
+        $shift = $this->postJson('/api/v1/grocery/shifts/open', ['register_id' => $this->registerId, 'opening_float' => 0])->json('data');
+        $this->postJson('/api/v1/grocery/pos/complete', [
+            'customer_id' => $customerId, 'store_id' => $this->storeId, 'register_id' => $this->registerId, 'shift_id' => $shift['id'],
+            'lines' => [['product_id' => $product['id'], 'unit_id' => $this->eachId, 'quantity' => 1]],
+            'payments' => [['method' => 'credit', 'amount' => 250]],
+        ])->assertOk();
+        $this->assertDatabaseHas('customer_account_entries', ['customer_id' => $customerId, 'debit' => 250]);
+        $this->postJson('/api/v1/grocery/customer-payments', [
+            'customer_id' => $customerId, 'payment_date' => today()->toDateString(),
+            'amount' => 300, 'method' => 'cash', 'reference' => 'COUNTER-REPAYMENT',
+        ])->assertOk()->assertJsonPath('data.applied_to_credit', 250)->assertJsonPath('data.added_store_credit', 50);
+        $this->assertDatabaseHas('customer_account_entries', ['customer_id' => $customerId, 'credit' => 250]);
+        $this->assertSame(50.0, (float) DB::table('customers')->where('id', $customerId)->value('advance_balance'));
     }
 
     public function test_backup_contains_grocery_groups_and_no_excluded_modules(): void

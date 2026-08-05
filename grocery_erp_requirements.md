@@ -419,7 +419,7 @@ The following current-system features are not relevant and must not appear in th
 - Product makes/models and colors.
 - Item serial-number capture, serial movement, and serial edit audit.
 - Salesperson routes/areas and collection routes unless later required for delivery operations.
-- Advanced cheque lifecycle when the grocery does not accept post-dated cheques.
+- Cheque lifecycle outside the configurable post-dated supplier-cheque workflow.
 - Manufacturing, recipes/bill of materials, payroll, HR, fixed assets, e-commerce, delivery fleet management, and full CRM.
 - Complex loyalty, gift cards, coupons, demand forecasting, and offline multi-device synchronization in Release 1.
 
@@ -443,11 +443,11 @@ Existing source code for excluded modules may be used as a reference during migr
 
 ### Release 2 — Optional
 
-- Registered-customer credit sales and statements if not needed in Release 1
+- Customer credit statement aging and automated reminder workflows beyond the implemented configurable credit-sale and repayment ledger
 - Loyalty points, membership pricing, gift cards, coupons, and store credit
 - Advanced promotions and promotion analysis
 - Suggested purchasing and demand forecasting
-- Scale integration and configurable embedded-weight barcode formats beyond basic parsing
+- Direct weighing-scale hardware integration beyond the implemented configurable embedded-weight barcode parsing
 - Email/SMS/WhatsApp notifications
 - E-commerce, delivery, and third-party accounting/payment integrations
 - Robust offline POS synchronization
@@ -496,12 +496,12 @@ The Grocery ERP is implemented as the separate repository `E:\freelance\grocery-
 
 | Acceptance area | Status | Verified implementation |
 |---|---|---|
-| Administration and master data | PASS | Branches, stores, registers, users, grocery-only roles/permissions, products, barcodes, alternate units, taxes, suppliers, customers, promotions, prices, and opening stock |
-| POS and cashier workflow | PASS | Scanner/search flow, weighted/decimal quantities, unit conversion, line discount, inclusive/exclusive tax, cash/card/bank/mobile payments, split payment, hold/resume, shift requirement, atomic checkout, and 80 mm print/reprint receipt |
+| Administration and master data | PASS | Branches, stores, registers, users, action-level roles/permissions, grocery-only suppliers without supplier types, product/category/brand/unit/tax CRUD, barcodes, prices, customers, promotions, document numbering, company settings, and opening stock |
+| POS and cashier workflow | PASS | Scanner/search flow, weighted/decimal quantities, configurable scale barcodes, unit conversion, promotion/discount and inclusive/exclusive tax calculations, customer selection, cash/card/bank/mobile/credit/store-credit payments, split payment, hold/resume, checkout-only full screen, shift requirement, atomic checkout, and 80 mm print/reprint receipt |
 | Sale correction controls | PASS | Completed sales are immutable; return/refund and authorized void workflows reverse stock and write audit records |
-| Purchasing | PASS | Purchase orders, approval, direct or PO-linked goods receipts, partial receipt quantities, supplier invoices, batches, expiry, free/rejected quantities, weighted-average cost, and purchase returns |
+| Purchasing | PASS | Purchase orders with validated branch product/unit foreign keys, scanner/search picker across 1,000 active products, correct purchase/selling price defaults, approval, direct or PO-linked goods receipts, partial receipt quantities, supplier invoices, batches, expiry, free/rejected quantities, weighted-average cost, and purchase returns |
 | Inventory | PASS | Store stock, immutable movements, opening/adjustment reasons, FEFO, expired-stock blocking, transfers with destination receipt, low-stock/expiry alerts, cycle/full counts, physical quantity entry, and variance posting |
-| Cash and supplier operations | PASS | Shift open/close and variance, cash in/out/drop, expenses, supplier balances, and supplier payments |
+| Cash and supplier operations | PASS | Shift open/close and variance, cash in/out/drop, expenses, supplier balances/payments, configurable customer credit sales and repayments with overpayment-to-store-credit handling, post-dated supplier cheques with status lifecycle, and chart-of-accounts maintenance |
 | Reports and output | PASS | Dashboard and sales/profit/inventory/expiry/supplier/shift/expense/audit reports with search, CSV export, and print/PDF output |
 | Security and isolation | PASS | Sanctum authentication, branch scoping, grocery module/action permissions, Super Admin controls, audit trail, and excluded HP/service endpoints returning 404 |
 | Backup and restore | PASS | Grocery-table ZIP/CSV backups, download/history, operational refresh, validated restore, and automatic pre-restore safety backup |
@@ -509,14 +509,14 @@ The Grocery ERP is implemented as the separate repository `E:\freelance\grocery-
 
 ### Verification evidence
 
-- Backend: `7` tests passed with `66` assertions against the dedicated MySQL test database after the final stock-count coverage was added.
-- Frontend: ESLint passed, TypeScript passed, and the Next.js production build generated all `38` expected Grocery ERP routes.
-- Live UI: login, grocery-only navigation, POS split-payment/hold controls, grocery-only role permission matrix, and backup creation/restore controls were inspected in the browser.
+- Backend: `9` tests passed with `100` assertions against the dedicated MySQL test database, including invalid purchase-order picker values, price persistence, company features, tax/numbering configuration, credit sales/repayments, and cheque lifecycle coverage.
+- Frontend: ESLint passed, TypeScript passed, and the Next.js production build generated all `43` expected Grocery ERP routes.
+- Live UI: login, correct product purchase/selling prices, searchable barcode-aware purchase picker, modal-local validation warnings, POS totals and checkout-only full screen, company settings, grocery-only navigation, role permissions, and backup controls were inspected in the browser.
 - Backup integrity: automated restore verification changes live data, restores the selected snapshot, and confirms the original value returns; the archive also confirms excluded hire-purchase data is absent.
 
 ### Release 1 configuration assumptions
 
 - Weighted-average inventory costing is enabled.
 - Negative stock and sales from expired batches are blocked.
-- Customer credit, post-dated-cheque lifecycle, advanced chart of accounts, bilingual receipts, scale-specific barcode formats, and device-specific drawer/label-printer integrations remain disabled because Section 14 leaves them as business decisions or Release 2 scope.
-- The seeded company uses `LKR` and `Asia/Colombo`; company, tax, receipt footer, numbering, and branch settings can be changed for deployment.
+- Customer credit, post-dated supplier cheques, chart of accounts, bilingual receipts, embedded-weight scale barcodes, cash-drawer commands, and receipt/label-printer names are deployment settings. They are disabled by default and can be enabled independently in Company Settings.
+- The seeded company uses `LKR` and `Asia/Colombo`; company identity, tax, receipt footers, document prefixes/next numbers, and branch settings are editable in the administration UI.

@@ -2,9 +2,9 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Barcode, Banknote, CreditCard, Pause, Plus, Printer, ReceiptText, Search, ShoppingCart, Trash2, WalletCards } from 'lucide-react';
+import { Barcode, Banknote, CreditCard, Maximize2, Minimize2, Pause, Plus, Printer, ReceiptText, Search, ShoppingCart, Trash2, WalletCards } from 'lucide-react';
 import { api, getApiErrorMessage } from '@/lib/api';
-import { GroceryOptions, GroceryProduct, GroceryUnit, PosLine, money, quantity } from '@/lib/grocery';
+import { GroceryOptions, GroceryProduct, GroceryUnit, PosLine, money as formatMoney, quantity } from '@/lib/grocery';
 import { OperationField, OperationHeader, OperationNotice } from '@/components/operation-ui';
 
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100';
@@ -28,7 +28,9 @@ export default function PointOfSalePage() {
   const [lastSale, setLastSale] = useState<{ id: number; invoice_no: string } | null>(null);
   const [heldSales, setHeldSales] = useState<Array<{ id: number; invoice_no: string; grand_total: number }>>([]);
   const [heldSaleId, setHeldSaleId] = useState<number | null>(null);
+  const [focusMode, setFocusMode] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const money = (value: number | string | null | undefined) => formatMoney(value, String(options?.company?.currency || 'LKR'));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,16 +70,44 @@ export default function PointOfSalePage() {
     return () => window.removeEventListener('keydown', handler);
   });
 
-  const subtotal = useMemo(() => cart.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0), [cart]);
-  const discount = useMemo(() => cart.reduce((sum, line) => sum + line.discount, 0), [cart]);
-  const tax = useMemo(() => cart.reduce((sum, line) => {
-    if (Boolean(line.product.tax_inclusive)) return sum;
-    return sum + Math.max(0, line.quantity * line.unitPrice - line.discount) * Number(line.product.tax_rate || 0) / 100;
-  }, 0), [cart]);
-  const total = Math.max(0, subtotal - discount + tax);
+  useEffect(() => {
+    const sync = () => { if (!document.fullscreenElement) setFocusMode(false); };
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  const pricing = useMemo(() => cart.map((line) => {
+    const gross = line.quantity * line.unitPrice;
+    const eligible = (options?.promotions || []).filter((promotion) => {
+      const now = Date.now(); const starts = new Date(promotion.starts_at).getTime(); const ends = new Date(promotion.ends_at).getTime();
+      const target = promotion.target_type === 'basket' || (promotion.target_type === 'product' && promotion.target_id === line.product.id) || (promotion.target_type === 'category' && promotion.target_id === line.product.category_id) || (promotion.target_type === 'brand' && promotion.target_id === line.product.brand_id);
+      return target && now >= starts && now <= ends && (!promotion.minimum_qty || line.quantity >= Number(promotion.minimum_qty)) && (!promotion.minimum_subtotal || gross >= Number(promotion.minimum_subtotal));
+    });
+    const promotionDiscount = eligible.reduce((best, promotion) => {
+      const value = Number(promotion.value); let next = 0;
+      if (promotion.type === 'percentage' || promotion.type === 'quantity_break') next = gross * value / 100;
+      if (promotion.type === 'fixed') next = value;
+      if (promotion.type === 'price') next = Math.max(0, gross - line.quantity * value);
+      if (promotion.type === 'buy_x_get_y' && promotion.buy_qty && promotion.get_qty) next = Math.floor(line.quantity / (Number(promotion.buy_qty) + Number(promotion.get_qty))) * Number(promotion.get_qty) * (gross / line.quantity);
+      return Math.max(best, next);
+    }, 0);
+    const lineDiscount = Math.min(gross, Math.max(line.discount, promotionDiscount));
+    const afterDiscount = gross - lineDiscount; const rate = Number(line.product.tax_rate || 0);
+    const lineTax = Boolean(line.product.tax_inclusive) ? afterDiscount - afterDiscount / (1 + rate / 100) : afterDiscount * rate / 100;
+    const lineTotal = Boolean(line.product.tax_inclusive) ? afterDiscount : afterDiscount + lineTax;
+    return { key: line.key, gross, discount: lineDiscount, tax: lineTax, total: lineTotal };
+  }), [cart, options?.promotions]);
+  const subtotal = pricing.reduce((sum, line) => sum + line.gross, 0);
+  const discount = pricing.reduce((sum, line) => sum + line.discount, 0);
+  const tax = pricing.reduce((sum, line) => sum + line.tax, 0);
+  const total = Math.max(0, pricing.reduce((sum, line) => sum + line.total, 0));
   const secondaryDue = splitPayment ? Math.min(total, Math.max(0, Number(secondaryAmount || 0))) : 0;
   const primaryDue = Math.max(0, total - secondaryDue);
   const change = Math.max(0, Number(tendered || 0) - primaryDue);
+  const paymentMethods: Array<[string, typeof Banknote]> = [
+    ['cash', Banknote], ['card', CreditCard], ['bank_transfer', CreditCard], ['mobile', WalletCards],
+    ...(Boolean(options?.company?.customer_credit_enabled) ? [['credit', WalletCards] as [string, typeof Banknote], ['store_credit', WalletCards] as [string, typeof Banknote]] : []),
+  ];
 
   const filtered = useMemo(() => {
     const value = search.trim().toLowerCase();
@@ -85,14 +115,14 @@ export default function PointOfSalePage() {
     return products.filter((product) => product.sku.toLowerCase().includes(value) || product.name.toLowerCase().includes(value) || product.barcodes.some((barcode) => barcode === search.trim())).slice(0, 20);
   }, [products, search]);
 
-  function addProduct(product: GroceryProduct) {
+  function addProduct(product: GroceryProduct, scannedQuantity = 1) {
     const unit = product.units.find((candidate) => candidate.unit_id === product.base_unit_id) || product.units[0];
     if (!unit) return;
     const key = `${product.id}:${unit.unit_id}`;
     setCart((current) => {
       const existing = current.find((line) => line.key === key);
-      if (existing) return current.map((line) => line.key === key ? { ...line, quantity: line.quantity + 1 } : line);
-      return [...current, { key, product, unit, quantity: 1, unitPrice: Number(unit.selling_price ?? product.retail_price), discount: 0 }];
+      if (existing) return current.map((line) => line.key === key ? { ...line, quantity: line.quantity + scannedQuantity } : line);
+      return [...current, { key, product, unit, quantity: scannedQuantity, unitPrice: Number(unit.selling_price ?? product.retail_price), discount: 0 }];
     });
     setSearch('');
     searchRef.current?.focus();
@@ -100,6 +130,15 @@ export default function PointOfSalePage() {
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
+    const prefix = String(options?.company?.scale_barcode_prefix || '');
+    const productDigits = Number(options?.company?.scale_product_digits || 5);
+    const weightDigits = Number(options?.company?.scale_weight_digits || 5);
+    if (prefix && search.startsWith(prefix) && search.length >= prefix.length + productDigits + weightDigits) {
+      const productCode = search.slice(prefix.length, prefix.length + productDigits);
+      const weight = Number(search.slice(prefix.length + productDigits, prefix.length + productDigits + weightDigits)) / 1000;
+      const scaledProduct = products.find((product) => product.sku === productCode || product.barcodes.some((barcode) => barcode === `${prefix}${productCode}`));
+      if (scaledProduct && weight > 0) { addProduct(scaledProduct, weight); return; }
+    }
     const exact = products.find((product) => product.barcodes.includes(search.trim()) || product.sku.toLowerCase() === search.trim().toLowerCase());
     if (exact) addProduct(exact);
     else if (filtered.length === 1) addProduct(filtered[0]);
@@ -166,11 +205,17 @@ export default function PointOfSalePage() {
 
   async function completeSale() { await saveSale(false); }
 
+  async function toggleFocusMode() {
+    if (!focusMode) { try { await document.documentElement.requestFullscreen?.(); } catch {} setFocusMode(true); }
+    else { if (document.fullscreenElement) await document.exitFullscreen(); setFocusMode(false); }
+  }
+
   if (loading && !options) return <div className="flex min-h-[60vh] items-center justify-center text-sm font-semibold text-slate-500">Preparing checkout…</div>;
 
   return (
-    <div className="space-y-5">
-      <OperationHeader eyebrow="Front counter" title="Point of sale" description="Scan, take payment, and move to the next customer. F2 focuses item search; F8 completes payment." icon={ShoppingCart} />
+    <div className={focusMode ? 'fixed inset-0 z-[100] overflow-y-auto bg-slate-100 p-3' : 'space-y-5'}>
+      {!focusMode && <OperationHeader eyebrow="Front counter" title="Point of sale" description="Scan, take payment, and move to the next customer. F2 focuses item search; F8 completes payment." icon={ShoppingCart} actions={<button onClick={() => void toggleFocusMode()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white"><Maximize2 className="h-4 w-4" /> Full-screen checkout</button>} />}
+      {focusMode && <button onClick={() => void toggleFocusMode()} className="fixed right-5 top-5 z-[110] inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-800 shadow-xl ring-1 ring-slate-200"><Minimize2 className="h-4 w-4" /> Exit full screen</button>}
       {notice && <OperationNotice type={notice.type}>{notice.text}</OperationNotice>}
       {lastSale && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950"><span><strong>{lastSale.invoice_no}</strong> is complete and ready to print.</span><Link href={`/dashboard/sales/${lastSale.id}/receipt`} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 font-bold text-white"><Printer className="h-4 w-4" /> Print receipt</Link></div>}
       {heldSales.length > 0 && <section className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-4"><span className="mr-2 text-xs font-bold uppercase tracking-wide text-slate-400">Held baskets</span>{heldSales.map((sale) => <button key={sale.id} onClick={() => void resumeHeldSale(sale.id)} disabled={saving} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs font-bold text-amber-950"><span>{sale.invoice_no}</span><span className="ml-2 font-normal text-amber-700">{money(sale.grand_total)}</span></button>)}</section>}
@@ -184,13 +229,13 @@ export default function PointOfSalePage() {
         </section>
       )}
 
-      <div className="grid min-h-[650px] gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(360px,.75fr)]">
+      <div className={`grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(360px,.75fr)] ${focusMode ? 'min-h-[calc(100vh-1.5rem)]' : 'min-h-[650px]'}`}>
         <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 bg-slate-950 p-4 text-white">
+          <div className="grid gap-3 border-b border-slate-200 bg-slate-950 p-4 text-white lg:grid-cols-[1fr_260px]">
             <form onSubmit={submitSearch} className="relative">
               <Barcode className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-emerald-300" />
               <input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Scan barcode or search product (F2)" className="w-full rounded-2xl border border-white/15 bg-white/10 py-3.5 pl-12 pr-4 text-base text-white outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-400/15" />
-            </form>
+            </form><select aria-label="Customer" className="rounded-2xl border border-white/15 bg-slate-900 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400" value={customerId || ''} onChange={(event) => setCustomerId(Number(event.target.value) || null)}>{(options?.customers || []).map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select>
           </div>
           <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map((product) => (
@@ -214,14 +259,14 @@ export default function PointOfSalePage() {
                   <select className={inputClass} value={line.unit.unit_id} onChange={(event) => updateLine(line.key, { unit: line.product.units.find((unit) => unit.unit_id === Number(event.target.value)) as GroceryUnit })}>{line.product.units.map((unit) => <option key={unit.unit_id} value={unit.unit_id}>{unit.code}</option>)}</select>
                   <input className={inputClass} type="number" min="0.001" step={line.product.allow_decimal_qty ? '0.001' : '1'} value={line.quantity} onChange={(event) => updateLine(line.key, { quantity: Number(event.target.value) })} />
                 </div>
-                <div className="mt-2 flex items-center justify-between text-sm"><span className="text-slate-500">{money(line.unitPrice)} each</span><span className="font-bold text-slate-950">{money(line.quantity * line.unitPrice - line.discount)}</span></div>
+                <div className="mt-2 flex items-center justify-between text-sm"><span className="text-slate-500">{money(line.unitPrice)} each</span><span className="font-bold text-slate-950">{money(pricing.find((item) => item.key === line.key)?.total || 0)}</span></div>
               </div>
             ))}
             {!cart.length && <div className="flex min-h-56 flex-col items-center justify-center text-center text-slate-400"><ShoppingCart className="h-9 w-9" /><p className="mt-3 text-sm font-semibold">Scan the first item to begin.</p></div>}
           </div>
           <div className="border-t border-slate-200 bg-slate-50 p-4">
             <div className="space-y-2 text-sm"><div className="flex justify-between text-slate-500"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="flex justify-between text-slate-500"><span>Discount</span><span>-{money(discount)}</span></div>{tax > 0 && <div className="flex justify-between text-slate-500"><span>Tax</span><span>{money(tax)}</span></div>}<div className="flex justify-between border-t border-slate-200 pt-3 text-xl font-black text-slate-950"><span>Total</span><span>{money(total)}</span></div></div>
-            <div className="mt-4 grid grid-cols-4 gap-2">{[['cash', Banknote], ['card', CreditCard], ['bank_transfer', CreditCard], ['mobile', WalletCards]].map(([method, Icon]) => { const PaymentIcon = Icon as typeof Banknote; return <button key={method as string} onClick={() => setPaymentMethod(method as string)} className={`rounded-xl border p-2 text-[11px] font-bold capitalize transition ${paymentMethod === method ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}><PaymentIcon className="mx-auto mb-1 h-4 w-4" />{String(method).replace('_', ' ')}</button>; })}</div>
+            <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-4">{paymentMethods.map(([method, PaymentIcon]) => <button key={method} onClick={() => setPaymentMethod(method)} className={`rounded-xl border p-2 text-[11px] font-bold capitalize transition ${paymentMethod === method ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}><PaymentIcon className="mx-auto mb-1 h-4 w-4" />{method.replaceAll('_', ' ')}</button>)}</div>
             <label className="mt-3 flex items-center gap-2 text-xs font-bold text-slate-600"><input type="checkbox" checked={splitPayment} onChange={(event) => setSplitPayment(event.target.checked)} className="h-4 w-4 accent-emerald-600" /> Split payment</label>
             {splitPayment && <div className="mt-2 grid grid-cols-2 gap-2"><OperationField label="Second method"><select className={inputClass} value={secondaryMethod} onChange={(event) => setSecondaryMethod(event.target.value)}><option value="card">Card</option><option value="bank_transfer">Bank transfer</option><option value="mobile">Mobile / QR</option><option value="cash">Cash</option></select></OperationField><OperationField label="Second amount"><input className={inputClass} type="number" min="0.01" max={total} value={secondaryAmount} onChange={(event) => setSecondaryAmount(event.target.value)} /></OperationField></div>}
             {splitPayment && <div className="mt-2 flex justify-between rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-900"><span>Primary payment</span><span>{money(primaryDue)}</span></div>}

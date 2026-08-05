@@ -7,7 +7,7 @@ import { Permission } from '@/lib/auth-types';
 import { OperationHeader, OperationNotice } from '@/components/operation-ui';
 
 type Role = { id: number; name: string; description?: string; users_count: number };
-const MODULES = ['dashboard','pos','products','categories','brands','units','taxes','suppliers','customers','stores','registers','purchases','purchase-returns','inventory','transfers','adjustments','stock-counts','sales','sales-returns','shifts','cash','expenses','supplier-payments','promotions','reports','audit','settings','backups','users','roles'];
+const MODULES = ['dashboard','pos','products','categories','brands','units','taxes','suppliers','customers','stores','registers','purchases','purchase-returns','inventory','transfers','adjustments','stock-counts','sales','sales-returns','shifts','cash','expenses','supplier-payments','accounts','promotions','reports','audit','settings','backups','users','roles'];
 const ACTIONS: Array<keyof Pick<Permission, 'can_read' | 'can_create' | 'can_update' | 'can_delete'>> = ['can_read','can_create','can_update','can_delete'];
 
 export default function RolesPage() {

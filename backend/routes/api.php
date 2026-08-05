@@ -16,9 +16,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/v1/grocery/products', [GroceryController::class, 'products'])->middleware('role.permission:products');
     Route::post('/v1/grocery/products', [GroceryController::class, 'storeProduct'])->middleware('role.permission:products,can_create');
     Route::put('/v1/grocery/products/{id}', [GroceryController::class, 'updateProduct'])->middleware('role.permission:products,can_update');
+    Route::delete('/v1/grocery/products/{id}', [GroceryController::class, 'destroyProduct'])->middleware('role.permission:products,can_delete');
 
     Route::get('/v1/grocery/masters/{resource}', [GroceryController::class, 'masterIndex']);
     Route::post('/v1/grocery/masters/{resource}', [GroceryController::class, 'masterStore']);
+    Route::put('/v1/grocery/masters/{resource}/{id}', [GroceryController::class, 'masterUpdate']);
+    Route::delete('/v1/grocery/masters/{resource}/{id}', [GroceryController::class, 'masterDestroy']);
 
     Route::get('/v1/grocery/shifts', [GroceryController::class, 'shifts'])->middleware('role.permission:shifts');
     Route::post('/v1/grocery/shifts/open', [GroceryController::class, 'openShift'])->middleware('role.permission:shifts,can_create');
@@ -50,6 +53,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/v1/grocery/goods-receipts', [GroceryController::class, 'receiveGoods'])->middleware('role.permission:purchases,can_create');
     Route::post('/v1/grocery/purchase-returns', [GroceryController::class, 'purchaseReturn'])->middleware('role.permission:purchase-returns,can_create');
     Route::post('/v1/grocery/supplier-payments', [GroceryController::class, 'supplierPayment'])->middleware('role.permission:supplier-payments,can_create');
+    Route::get('/v1/grocery/cheques', [GroceryController::class, 'cheques'])->middleware('role.permission:accounts');
+    Route::patch('/v1/grocery/cheques/{id}', [GroceryController::class, 'updateCheque'])->middleware('role.permission:accounts,can_update');
+    Route::get('/v1/grocery/customer-accounts', [GroceryController::class, 'customerAccounts'])->middleware('role.permission:customers');
+    Route::post('/v1/grocery/customer-payments', [GroceryController::class, 'customerPayment'])->middleware('role.permission:customers,can_create');
 
     Route::get('/v1/grocery/expenses', [GroceryController::class, 'expenses'])->middleware('role.permission:expenses');
     Route::post('/v1/grocery/expenses', [GroceryController::class, 'storeExpense'])->middleware('role.permission:expenses,can_create');
@@ -59,6 +66,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Reused grocery-relevant master registries.
     Route::apiResource('/v1/branches', App\Http\Controllers\Api\V1\BranchController::class)->middleware('role.permission:settings');
+    Route::apiResource('/v1/companies', App\Http\Controllers\Api\V1\CompanyController::class)->middleware('role.permission:settings');
     Route::apiResource('/v1/stores', App\Http\Controllers\Api\V1\StoreController::class)->middleware('role.permission:stores');
     Route::apiResource('/v1/categories', App\Http\Controllers\Api\V1\CategoryController::class)->middleware('role.permission:categories');
     Route::apiResource('/v1/brands', App\Http\Controllers\Api\V1\BrandController::class)->middleware('role.permission:brands');

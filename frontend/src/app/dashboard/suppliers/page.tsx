@@ -8,44 +8,32 @@ interface SupplierRecord extends CrudRecord {
   name: string;
   phone: string | null;
   address: string | null;
-  type: 'normal' | 'service';
 }
 
 export default function SuppliersPage() {
   return (
     <CrudWorkspace<SupplierRecord>
       title="Suppliers"
-      description="Maintain inventory and service suppliers used by purchasing and repair workflows."
+      description="Maintain grocery suppliers, contacts, payment terms, and tax details used by purchasing."
       endpoint="/v1/suppliers"
       module="suppliers"
       singular="Supplier"
       plural="Suppliers"
       icon={Truck}
-      initialValues={{ name: '', phone: '', address: '', type: 'normal' }}
-      searchKeys={['Code', 'name', 'phone', 'type']}
+      initialValues={{ name: '', contact_person: '', phone: '', email: '', address: '', tax_number: '', credit_limit: '0', payment_terms_days: '0' }}
+      searchKeys={['Code', 'name', 'contact_person', 'phone', 'email']}
       fields={[
         {
           name: 'name',
           label: 'Supplier name',
           required: true,
-          placeholder: 'Business or contact name',
         },
-        {
-          name: 'type',
-          label: 'Supplier type',
-          type: 'select',
-          required: true,
-          options: [
-            { value: 'normal', label: 'Inventory supplier' },
-            { value: 'service', label: 'Service supplier' },
-          ],
-        },
+        { name: 'contact_person', label: 'Contact person', nullable: true },
         {
           name: 'phone',
           label: 'Phone',
           type: 'tel',
           nullable: true,
-          placeholder: 'Contact number',
           maxLength: 25,
           pattern: '[0-9+()\\-\\s]{8,25}',
         },
@@ -54,9 +42,12 @@ export default function SuppliersPage() {
           label: 'Address',
           type: 'textarea',
           nullable: true,
-          placeholder: 'Postal address',
           span: 2,
         },
+        { name: 'email', label: 'Email', type: 'email', nullable: true },
+        { name: 'tax_number', label: 'Tax number', nullable: true },
+        { name: 'credit_limit', label: 'Credit limit', type: 'number', min: 0 },
+        { name: 'payment_terms_days', label: 'Payment terms (days)', type: 'number', min: 0 },
       ]}
       columns={[
         {
@@ -76,21 +67,8 @@ export default function SuppliersPage() {
           ),
         },
         { key: 'phone', label: 'Phone' },
-        {
-          key: 'type',
-          label: 'Type',
-          render: (record) => (
-            <span
-              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                record.type === 'service'
-                  ? 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200'
-                  : 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200'
-              }`}
-            >
-              {record.type === 'service' ? 'Service' : 'Inventory'}
-            </span>
-          ),
-        },
+        { key: 'contact_person', label: 'Contact' },
+        { key: 'payment_terms_days', label: 'Terms (days)' },
       ]}
     />
   );

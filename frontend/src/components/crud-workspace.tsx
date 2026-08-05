@@ -299,7 +299,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
         )}
       </section>
 
-      {notice && (
+      {notice && !showForm && (
         <OperationNotice type={notice.type} details={notice.details}>
           {notice.message}
         </OperationNotice>
@@ -447,6 +447,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
             </div>
 
             <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-5 p-6 sm:grid-cols-2">
+              {notice && <div className="sm:col-span-2"><OperationNotice type={notice.type} details={notice.details}>{notice.message}</OperationNotice></div>}
               {fields.map((field) => {
                 const options =
                   typeof field.options === 'function'

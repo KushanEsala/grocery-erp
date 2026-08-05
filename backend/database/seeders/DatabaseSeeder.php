@@ -25,14 +25,17 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        Company::updateOrCreate(
+        $company = Company::updateOrCreate(
             ['email' => 'info@company.com'],
             [
                 'name' => 'Default Company',
                 'address' => 'Colombo, Sri Lanka',
                 'phone' => '0112000000',
+                'currency' => 'LKR', 'timezone' => 'Asia/Colombo',
+                'receipt_footer' => 'Thank you for shopping with us.',
             ]
         );
+        BranchDel::where('bccode', 'HQ')->update(['company_id' => $company->id]);
 
         Store::updateOrCreate(
             ['name' => 'Main Store', 'BC' => 'HQ'],
@@ -179,6 +182,8 @@ class DatabaseSeeder extends Seeder
             'shop_name' => 'Grocery ERP', 'currency' => 'LKR', 'timezone' => 'Asia/Colombo',
             'negative_stock' => 'false', 'require_open_shift' => 'true',
             'near_expiry_days' => '30', 'costing_method' => 'weighted_average',
+            'customer_credit_enabled' => 'false', 'post_dated_cheques_enabled' => 'false',
+            'accounting_enabled' => 'false', 'bilingual_receipts_enabled' => 'false',
         ];
         foreach ($settings as $key => $value) {
             DB::table('app_settings')->updateOrInsert(
@@ -188,9 +193,18 @@ class DatabaseSeeder extends Seeder
         }
 
         foreach ([
+            ['1000', 'Cash', 'asset'], ['1100', 'Inventory', 'asset'], ['1200', 'Customer Receivables', 'asset'],
+            ['2000', 'Supplier Payables', 'liability'], ['4000', 'Sales Revenue', 'income'],
+            ['5000', 'Cost of Goods Sold', 'expense'], ['6000', 'Operating Expenses', 'expense'],
+        ] as [$code, $name, $type]) DB::table('chart_accounts')->updateOrInsert(
+            ['branch_code' => 'HQ', 'code' => $code],
+            ['name' => $name, 'type' => $type, 'active' => true, 'created_at' => $now, 'updated_at' => $now]
+        );
+
+        foreach ([
             'sale' => 'INV', 'return' => 'RET', 'shift' => 'SHF', 'purchase_order' => 'PO',
             'goods_receipt' => 'GRN', 'purchase_return' => 'PRN', 'transfer' => 'TRF',
-            'adjustment' => 'ADJ', 'stock_count' => 'CNT', 'expense' => 'EXP', 'supplier_payment' => 'SPY',
+            'adjustment' => 'ADJ', 'stock_count' => 'CNT', 'expense' => 'EXP', 'supplier_payment' => 'SPY', 'customer_payment' => 'CPY',
         ] as $type => $prefix) {
             DB::table('document_sequences')->updateOrInsert(
                 ['branch_code' => 'HQ', 'document_type' => $type],

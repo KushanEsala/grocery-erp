@@ -50,6 +50,9 @@ class GroceryService
         $products = DB::table('products as p')
             ->leftJoin('units as u', 'u.id', '=', 'p.base_unit_id')
             ->leftJoin('tax_rates as t', 't.id', '=', 'p.tax_rate_id')
+            ->leftJoin('categories as c', 'c.id', '=', 'p.category_id')
+            ->leftJoin('m_brands as br', 'br.id', '=', 'p.brand_id')
+            ->leftJoin('suppliers as sp', 'sp.id', '=', 'p.preferred_supplier_id')
             ->where('p.branch_code', $user->BC)
             ->where('p.active', true)
             ->when($search, function ($query, $search) {
@@ -62,8 +65,8 @@ class GroceryService
                         });
                 });
             })
-            ->select('p.*', 'u.code as base_unit_code', 'u.name as base_unit_name', 't.rate as tax_rate', 't.inclusive as tax_inclusive')
-            ->orderBy('p.name')->limit($search ? 50 : 200)->get();
+            ->select('p.*', 'u.code as base_unit_code', 'u.name as base_unit_name', 't.rate as tax_rate', 't.inclusive as tax_inclusive', 't.name as tax_name', 'c.name as category_name', 'br.name as brand_name', 'sp.name as preferred_supplier_name')
+            ->orderBy('p.name')->limit($search ? 100 : 1000)->get();
 
         return $products->map(function ($product) use ($storeId) {
             $product->barcodes = DB::table('product_barcodes')->where('product_id', $product->id)->pluck('barcode');
@@ -211,6 +214,21 @@ class GroceryService
             if (! $hold) {
                 $paid = round(collect($data['payments'])->sum(fn ($p) => (float) $p['amount']), 2);
                 if ($paid + 0.009 < $grand) throw ValidationException::withMessages(['payments' => 'Payments must cover the sale total.']);
+                $customer = ($data['customer_id'] ?? null) ? DB::table('customers')->where('id', $data['customer_id'])->where('BC', $user->BC)->lockForUpdate()->first() : null;
+                $company = DB::table('branch_dels as b')->leftJoin('companies as c', 'c.id', '=', 'b.company_id')->where('b.bccode', $user->BC)->select('c.*')->first() ?: DB::table('companies')->first();
+                foreach ($data['payments'] as $payment) {
+                    if (in_array($payment['method'], ['credit', 'store_credit'], true) && (! $customer || $customer->Code === 'WALK-IN')) {
+                        throw ValidationException::withMessages(['customer_id' => 'Select a registered customer for credit payments.']);
+                    }
+                    if ($payment['method'] === 'credit') {
+                        if (! $company?->customer_credit_enabled) throw ValidationException::withMessages(['payments' => 'Customer credit is disabled in Company Settings.']);
+                        $balance = (float) DB::table('customer_account_entries')->where('customer_id', $customer->id)->selectRaw('COALESCE(SUM(debit-credit),0) balance')->value('balance');
+                        if ($balance + (float) $payment['amount'] > (float) $customer->credit_limit + 0.009) throw ValidationException::withMessages(['payments' => 'This sale exceeds the customer credit limit.']);
+                    }
+                    if ($payment['method'] === 'store_credit' && (float) $customer->advance_balance + 0.009 < (float) $payment['amount']) {
+                        throw ValidationException::withMessages(['payments' => 'The customer does not have enough store credit.']);
+                    }
+                }
             }
 
             $saleId = DB::table('sales')->insertGetId([
@@ -250,6 +268,12 @@ class GroceryService
                         'change_amount' => max(0, round((float) ($payment['tendered'] ?? $payment['amount']) - $applied, 2)),
                         'created_at' => now(), 'updated_at' => now(),
                     ]);
+                    if ($payment['method'] === 'credit') DB::table('customer_account_entries')->insert([
+                        'branch_code' => $user->BC, 'customer_id' => $data['customer_id'], 'reference_type' => 'sale',
+                        'reference_no' => DB::table('sales')->where('id', $saleId)->value('invoice_no'), 'entry_date' => today(),
+                        'debit' => $applied, 'credit' => 0, 'created_by' => $user->id, 'created_at' => now(), 'updated_at' => now(),
+                    ]);
+                    if ($payment['method'] === 'store_credit') DB::table('customers')->where('id', $data['customer_id'])->decrement('advance_balance', $applied, ['updated_at' => now()]);
                     $remaining = round($remaining - $applied, 2);
                 }
             }
@@ -333,12 +357,15 @@ class GroceryService
             ->leftJoin('customers as c', 'c.id', '=', 's.customer_id')
             ->leftJoin('stores as st', 'st.id', '=', 's.store_id')
             ->leftJoin('registers as r', 'r.id', '=', 's.register_id')
+            ->leftJoin('users as cashier', 'cashier.id', '=', 's.created_by')
             ->where('s.id', $id)->where('s.branch_code', $user->BC)
-            ->select('s.*', 'c.name as customer_name', 'st.name as store_name', 'r.name as register_name')
+            ->select('s.*', 'c.name as customer_name', 'st.name as store_name', 'r.name as register_name', 'cashier.username as cashier_name')
             ->first();
         if (! $sale) abort(404);
         $sale->lines = DB::table('sale_lines')->where('sale_id', $id)->get();
         $sale->payments = DB::table('sale_payments')->where('sale_id', $id)->get();
+        $sale->company = DB::table('branch_dels as b')->leftJoin('companies as c', 'c.id', '=', 'b.company_id')
+            ->where('b.bccode', $user->BC)->select('c.*')->first() ?: DB::table('companies')->orderBy('id')->first();
         return $sale;
     }
 
