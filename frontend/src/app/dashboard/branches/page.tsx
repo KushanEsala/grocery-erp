@@ -117,7 +117,7 @@ export default function BranchesPage() {
           key: 'bccode',
           label: 'Code',
           render: (record) => (
-            <span className="font-mono text-xs font-bold text-indigo-700">
+            <span className="font-mono text-xs font-bold text-[#237a55]">
               {record.bccode}
             </span>
           ),

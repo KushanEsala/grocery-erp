@@ -101,6 +101,24 @@ class GroceryWorkflowTest extends TestCase
             'supplier_invoice_date' => today()->toDateString(),
             'lines' => [['product_id' => $product['id'], 'unit_id' => $this->eachId, 'quantity' => 1, 'unit_cost' => 80, 'batch_no' => 'OLD', 'expiry_date' => now()->subDay()->toDateString()]],
         ])->assertUnprocessable()->assertJsonValidationErrors('lines.0.expiry_date');
+
+        $expiryOnly = $this->postJson('/api/v1/grocery/products', [
+            'sku' => 'YOGURT-001', 'name' => 'Yogurt Cup', 'base_unit_id' => $this->eachId,
+            'retail_price' => 180, 'latest_cost' => 120, 'batch_tracked' => false,
+            'expiry_tracked' => true, 'barcodes' => ['890100000099'],
+        ])->assertOk()->json('data');
+        $expiryDate = now()->addDays(14)->toDateString();
+        $this->postJson('/api/v1/grocery/goods-receipts', [
+            'supplier_id' => $supplierId, 'store_id' => $this->storeId,
+            'supplier_invoice_no' => 'INV-EXPIRY-ONLY', 'supplier_invoice_date' => today()->toDateString(),
+            'lines' => [[
+                'product_id' => $expiryOnly['id'], 'unit_id' => $this->eachId, 'quantity' => 2,
+                'unit_cost' => 120, 'selling_price' => 180, 'expiry_date' => $expiryDate,
+            ]],
+        ])->assertOk();
+        $this->assertDatabaseHas('product_batches', [
+            'product_id' => $expiryOnly['id'], 'expiry_date' => $expiryDate, 'quantity' => 2,
+        ]);
     }
 
     public function test_unit_conversion_transfer_and_stock_count_reconcile_base_quantity(): void
@@ -145,10 +163,11 @@ class GroceryWorkflowTest extends TestCase
         ])->assertOk();
 
         $held = $this->postJson('/api/v1/grocery/pos/hold', [
-            'store_id' => $this->storeId,
+            'store_id' => $this->storeId, 'hold_reference' => '4821',
             'lines' => [['product_id' => $product['id'], 'unit_id' => $this->eachId, 'quantity' => 1]],
             'payments' => [],
         ])->assertOk()->json('data');
+        $this->assertSame('4821', $held['hold_reference']);
         $this->assertSame(5.0, $this->stock($product['id'], $this->storeId));
 
         $pausedAgain = $this->postJson('/api/v1/grocery/pos/hold', [
@@ -164,10 +183,13 @@ class GroceryWorkflowTest extends TestCase
         $completed = $this->postJson('/api/v1/grocery/pos/complete', [
             'held_sale_id' => $pausedAgain['id'], 'store_id' => $this->storeId, 'shift_id' => $shift['id'],
             'lines' => [['product_id' => $product['id'], 'unit_id' => $this->eachId, 'quantity' => 1]],
-            'payments' => [['method' => 'cash', 'amount' => 250]],
+            'bill_discount_type' => 'percent', 'bill_discount_value' => 10,
+            'payments' => [['method' => 'cash', 'amount' => 225]],
         ])->assertOk()->json('data');
 
         $this->assertDatabaseHas('sales', ['id' => $pausedAgain['id'], 'status' => 'voided']);
+        $this->assertSame(225.0, (float) $completed['grand_total']);
+        $this->assertSame(25.0, (float) $completed['discount_total']);
         $this->assertSame(4.0, $this->stock($product['id'], $this->storeId));
         $this->postJson("/api/v1/grocery/sales/{$completed['id']}/void", ['reason' => 'Cashier scanned wrong basket'])->assertOk();
         $this->assertSame(5.0, $this->stock($product['id'], $this->storeId));

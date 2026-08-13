@@ -59,7 +59,7 @@ function toUserFriendlyErrorMessage(
     lowerMessage.includes('networkerror') ||
     lowerMessage.includes('network request failed')
   ) {
-    return 'We could not connect right now. Please try again in a moment.';
+    return 'Cannot connect to the ERP API. Start MySQL in XAMPP, run Laravel on the port configured by NEXT_PUBLIC_API_URL, then try again.';
   }
 
   if (
@@ -68,7 +68,7 @@ function toUserFriendlyErrorMessage(
     lowerMessage.includes('<!doctype html') ||
     lowerMessage.includes('<html')
   ) {
-    return 'We could not complete your request right now. Please try again shortly.';
+    return 'The API returned a web page instead of JSON. Check that NEXT_PUBLIC_API_URL points to the Laravel API, not the frontend.';
   }
 
   if (lowerMessage.includes('session expired')) {
@@ -79,7 +79,7 @@ function toUserFriendlyErrorMessage(
     lowerMessage.includes('frontend api url matches its port') ||
     lowerMessage.includes('laravel api is running')
   ) {
-    return 'We could not connect right now. Please try again in a moment.';
+    return 'Cannot connect to the ERP API. Start MySQL in XAMPP, run Laravel on the port configured by NEXT_PUBLIC_API_URL, then try again.';
   }
 
   if (/https?:\/\//i.test(normalizedMessage)) {
@@ -91,6 +91,8 @@ function toUserFriendlyErrorMessage(
 
 class ApiClient {
   private tokenKey = 'auth_token';
+  private pendingGets = new Map<string, Promise<ApiResponse<unknown>>>();
+  private getCache = new Map<string, { expiresAt: number; response: ApiResponse<unknown> }>();
 
   constructor(private baseUrl: string) {}
 
@@ -100,10 +102,12 @@ class ApiClient {
   }
 
   setToken(token: string) {
+    this.getCache.clear();
     localStorage.setItem(this.tokenKey, token);
   }
 
   clearToken() {
+    this.getCache.clear();
     localStorage.removeItem(this.tokenKey);
   }
 
@@ -209,26 +213,45 @@ class ApiClient {
   }
 
   async getUser() {
-    return this.request<AuthUser>('GET', '/v1/user');
+    return this.get<AuthUser>('/v1/user');
   }
 
   async get<T = unknown>(path: string) {
-    return this.request<T>('GET', path);
+    const cached = this.getCache.get(path);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.response as ApiResponse<T>;
+    }
+    const pending = this.pendingGets.get(path);
+    if (pending) return pending as Promise<ApiResponse<T>>;
+
+    const request = this.request<T>('GET', path);
+    this.pendingGets.set(path, request as Promise<ApiResponse<unknown>>);
+    try {
+      const response = await request;
+      this.getCache.set(path, { expiresAt: Date.now() + 1200, response });
+      return response;
+    } finally {
+      this.pendingGets.delete(path);
+    }
   }
 
   async post<T = unknown>(path: string, body: Record<string, unknown>) {
+    this.getCache.clear();
     return this.request<T>('POST', path, body);
   }
 
   async put<T = unknown>(path: string, body: Record<string, unknown>) {
+    this.getCache.clear();
     return this.request<T>('PUT', path, body);
   }
 
   async patch<T = unknown>(path: string, body: Record<string, unknown>) {
+    this.getCache.clear();
     return this.request<T>('PATCH', path, body);
   }
 
   async delete<T = unknown>(path: string) {
+    this.getCache.clear();
     return this.request<T>('DELETE', path);
   }
 

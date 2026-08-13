@@ -178,7 +178,7 @@ export function ReportTable<T>({
           <button
             type="button"
             onClick={exportPdf}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 transition hover:border-indigo-300 hover:text-indigo-700"
+            className="inline-flex items-center gap-2 rounded-xl border border-[#dce5de] bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 transition hover:border-[#2d8f63] hover:text-[#174a38]"
           >
             <Printer className="h-4 w-4" />
             Export PDF

@@ -4,10 +4,11 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
-  BarChart3,
+  CheckCircle2,
   LoaderCircle,
   LockKeyhole,
   Mail,
+  ShoppingBasket,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { getApiErrorMessage } from '@/lib/api';
@@ -44,28 +45,36 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-4">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -right-40 -top-40 h-80 w-80 rounded-full bg-indigo-500/10 blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-emerald-500/10 blur-3xl" />
-      </div>
-
-      <div className="relative w-full max-w-md">
-        <div className="mb-8 text-center">
-          <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur">
-            <BarChart3 className="h-7 w-7 text-white" />
+    <div className="flex min-h-screen items-center justify-center bg-[#e9f0eb] p-4 sm:p-8">
+      <main className="grid w-full max-w-4xl overflow-hidden rounded-3xl bg-white shadow-2xl shadow-[#12382b]/15 ring-1 ring-[#12382b]/10 md:grid-cols-[.9fr_1.1fr]">
+        <section className="relative hidden min-h-[610px] flex-col justify-between overflow-hidden bg-[#12382b] p-10 text-white md:flex">
+          <div className="market-stripe absolute inset-x-0 top-0 h-1.5" aria-hidden="true" />
+          <div>
+            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[#e3a32b] text-[#12382b]">
+              <ShoppingBasket className="h-6 w-6" />
+            </span>
+            <p className="mt-8 text-xs font-bold uppercase tracking-[0.2em] text-emerald-200/75">Grocery ERP</p>
+            <h1 className="mt-3 max-w-sm text-3xl font-bold leading-tight">Run the shop from one clear workspace.</h1>
+            <p className="mt-4 max-w-sm text-sm leading-6 text-emerald-50/70">Checkout, purchasing, stock, expiry and accounts stay connected from the shelf to the daily report.</p>
           </div>
-          <h1 className="text-2xl font-bold text-white">Grocery ERP</h1>
-          <p className="mt-1 text-sm text-indigo-200/70">
-            Retail, stock and cashier operations
-          </p>
-        </div>
+          <div className="space-y-3 border-t border-white/10 pt-6 text-sm text-emerald-50/80">
+            {['Fast cashier workflow', 'Batch and expiry visibility', 'Branch-level access control'].map((item) => (
+              <div key={item} className="flex items-center gap-3"><CheckCircle2 className="h-4 w-4 text-[#e3a32b]" />{item}</div>
+            ))}
+          </div>
+        </section>
 
-        <div className="rounded-2xl bg-white p-8 shadow-2xl">
+        <section className="relative p-7 sm:p-10 md:p-12">
+          <div className="mb-8 flex items-center gap-3 md:hidden">
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-[#12382b] text-white"><ShoppingBasket className="h-5 w-5" /></span>
+            <div><p className="font-bold text-[#17211c]">Grocery ERP</p><p className="text-xs text-slate-500">Retail operations</p></div>
+          </div>
+
           <div className="mb-6">
-            <h2 className="text-xl font-bold text-gray-900">Welcome back</h2>
-            <p className="mt-1 text-sm text-gray-500">
-              Sign in to your account to continue
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#237a55]">Secure access</p>
+            <h2 className="mt-2 text-2xl font-bold text-[#17211c]">Sign in to your workspace</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Use the account assigned to your store or branch.
             </p>
           </div>
 
@@ -87,7 +96,7 @@ export default function LoginPage() {
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  className="w-full rounded-xl border border-gray-300 py-3 pl-10 pr-4 text-sm outline-none transition placeholder:text-gray-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"
+                  className="w-full rounded-xl border border-[#dce5de] bg-[#f7f9f7] py-3 pl-10 pr-4 text-sm outline-none transition placeholder:text-slate-400 focus:border-[#2d8f63] focus:bg-white focus:ring-2 focus:ring-[#dff3e7]"
                   placeholder="admin@erp.com"
                   required
                 />
@@ -104,7 +113,7 @@ export default function LoginPage() {
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  className="w-full rounded-xl border border-gray-300 py-3 pl-10 pr-4 text-sm outline-none transition placeholder:text-gray-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"
+                  className="w-full rounded-xl border border-[#dce5de] bg-[#f7f9f7] py-3 pl-10 pr-4 text-sm outline-none transition placeholder:text-slate-400 focus:border-[#2d8f63] focus:bg-white focus:ring-2 focus:ring-[#dff3e7]"
                   placeholder="Password"
                   required
                 />
@@ -114,7 +123,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white shadow-sm shadow-indigo-200 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-xl bg-[#237a55] px-4 py-3 font-semibold text-white shadow-sm shadow-emerald-900/15 transition hover:bg-[#174a38] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -122,7 +131,7 @@ export default function LoginPage() {
                   Signing in...
                 </span>
               ) : (
-                'Sign In'
+                'Sign in'
               )}
             </button>
           </form>
@@ -134,8 +143,8 @@ export default function LoginPage() {
               <span className="font-medium text-gray-600">password</span>
             </p>
           </div>
-        </div>
-      </div>
+        </section>
+      </main>
     </div>
   );
 }

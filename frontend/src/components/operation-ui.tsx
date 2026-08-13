@@ -27,11 +27,11 @@ export function OperationHeader({
   return (
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div className="flex items-start gap-4">
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 ring-1 ring-inset ring-indigo-100">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#dff3e7] text-[#237a55] ring-1 ring-inset ring-[#c5e8d2]">
           <Icon className="h-6 w-6" />
         </span>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-600">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#237a55]">
             {eyebrow}
           </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
@@ -134,7 +134,7 @@ export function OperationMetric({
 }) {
   const tones = {
     slate: 'border-slate-200 bg-white text-slate-950',
-    indigo: 'border-indigo-200 bg-indigo-50 text-indigo-900',
+    indigo: 'border-[#c5e8d2] bg-[#eff9f2] text-[#174a38]',
     amber: 'border-amber-200 bg-amber-50 text-amber-900',
     emerald: 'border-emerald-200 bg-emerald-50 text-emerald-900',
     rose: 'border-rose-200 bg-rose-50 text-rose-900',
@@ -145,7 +145,7 @@ export function OperationMetric({
       <div className="text-xs font-semibold uppercase tracking-wide opacity-65">
         {label}
       </div>
-      <div className="mt-2 text-2xl font-bold">{value}</div>
+      <div className="data-figure mt-2 text-2xl font-bold">{value}</div>
       {help && <div className="mt-1 text-xs opacity-60">{help}</div>}
     </div>
   );
@@ -196,8 +196,9 @@ export function OperationModal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className={`content-scrollbar max-h-[94vh] w-full overflow-y-auto rounded-3xl bg-white shadow-2xl ${width}`}>
-        <div className="sticky top-0 z-20 flex items-start justify-between border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
+      <div className={`content-scrollbar max-h-[94vh] w-full overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 ${width}`}>
+        <div className="market-stripe sticky top-0 z-30 h-1" aria-hidden="true" />
+        <div className="sticky top-1 z-20 flex items-start justify-between border-b border-[#dce5de] bg-white/95 px-6 py-5 backdrop-blur">
           <div>
             <h2 className="text-lg font-bold text-slate-950">{title}</h2>
             {description && <p className="mt-1 text-xs text-slate-500">{description}</p>}
@@ -241,7 +242,7 @@ export function OperationActions({
       <button
         type="submit"
         disabled={saving || disabled}
-        className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        className="inline-flex items-center gap-2 rounded-xl bg-[#237a55] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#174a38] disabled:cursor-not-allowed disabled:bg-slate-300"
       >
         {saving && <LoaderCircle className="h-4 w-4 animate-spin" />}
         {saving ? 'Saving...' : submitLabel}
@@ -260,7 +261,7 @@ export function StatusPill({ status }: { status: string }) {
       : normalized === 'cancelled' || normalized === 'returned' || normalized === 'inactive'
           ? 'bg-rose-50 text-rose-700 ring-rose-200'
           : normalized === 'draft' || normalized === 'received' || normalized === 'invoiced' || normalized === 'converted'
-            ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+            ? 'bg-[#eff9f2] text-[#237a55] ring-[#c5e8d2]'
             : normalized === 'dispatched_to_supplier' || normalized === 'received_from_supplier'
               ? 'bg-violet-50 text-violet-700 ring-violet-200'
             : 'bg-slate-100 text-slate-600 ring-slate-200';
@@ -282,7 +283,7 @@ export function LoadingTableRow({
   return (
     <tr>
       <td colSpan={columns} className="px-5 py-14 text-center text-slate-400">
-        <LoaderCircle className="mx-auto mb-2 h-5 w-5 animate-spin text-indigo-600" />
+        <LoaderCircle className="mx-auto mb-2 h-5 w-5 animate-spin text-[#237a55]" />
         {label}
       </td>
     </tr>

@@ -274,7 +274,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
     <div className="space-y-6">
       <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex items-start gap-4">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 ring-1 ring-inset ring-indigo-100">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#dff3e7] text-[#237a55] ring-1 ring-inset ring-[#c5e8d2]">
             <Icon className="h-6 w-6" />
           </span>
           <div>
@@ -291,7 +291,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
           <button
             type="button"
             onClick={openCreate}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#237a55] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-900/10 transition hover:bg-[#174a38]"
           >
             <Plus className="h-4 w-4" />
             {addLabel || `New ${singular}`}
@@ -314,7 +314,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={searchPlaceholder || `Search ${plural.toLowerCase()}...`}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+              className="w-full rounded-xl border border-[#dce5de] bg-[#f7f9f7] py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-[#2d8f63] focus:bg-white focus:ring-2 focus:ring-[#dff3e7]"
             />
           </div>
           <div className="flex items-center justify-between gap-3 sm:justify-end">
@@ -325,7 +325,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
               type="button"
               onClick={fetchRecords}
               disabled={loading}
-              className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600 disabled:opacity-50"
+              className="rounded-lg p-2 text-slate-400 transition hover:bg-[#eff9f2] hover:text-[#237a55] disabled:opacity-50"
               title="Refresh"
             >
               <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -354,7 +354,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
                     colSpan={columns.length + (canUpdate || canDelete ? 1 : 0)}
                     className="px-5 py-14 text-center text-slate-400"
                   >
-                    <LoaderCircle className="mx-auto mb-2 h-5 w-5 animate-spin text-indigo-600" />
+                    <LoaderCircle className="mx-auto mb-2 h-5 w-5 animate-spin text-[#237a55]" />
                     Loading {plural.toLowerCase()}...
                   </td>
                 </tr>
@@ -387,7 +387,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
                             <button
                               type="button"
                               onClick={() => openEdit(record)}
-                              className="rounded-lg p-2 text-slate-400 transition hover:bg-indigo-50 hover:text-indigo-600"
+                              className="rounded-lg p-2 text-slate-400 transition hover:bg-[#eff9f2] hover:text-[#237a55]"
                               title={`Edit ${singular}`}
                             >
                               <Pencil className="h-4 w-4" />
@@ -474,7 +474,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
                         placeholder={field.placeholder}
                         required={field.required}
                         rows={4}
-                        className="w-full resize-y rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                        className="w-full resize-y rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition focus:border-[#2d8f63] focus:ring-2 focus:ring-[#dff3e7]"
                       />
                     ) : field.type === 'select' ? (
                       <select
@@ -486,7 +486,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
                           }))
                         }
                         required={field.required}
-                        className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-[#2d8f63] focus:ring-2 focus:ring-[#dff3e7]"
                       >
                         <option value="">
                           {field.placeholder || `Select ${field.label.toLowerCase()}`}
@@ -515,7 +515,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
                         maxLength={field.maxLength}
                         pattern={field.pattern}
                         step={field.step}
-                        className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                        className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none transition focus:border-[#2d8f63] focus:ring-2 focus:ring-[#dff3e7]"
                       />
                     )}
 
@@ -540,7 +540,7 @@ export function CrudWorkspace<TRecord extends CrudRecord>({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#237a55] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#174a38] disabled:opacity-60"
                 >
                   {saving && <LoaderCircle className="h-4 w-4 animate-spin" />}
                   {editingRecord ? 'Save changes' : `Create ${singular.toLowerCase()}`}

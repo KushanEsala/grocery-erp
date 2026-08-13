@@ -29,8 +29,11 @@ class GroceryController extends Controller
             'tax_rates' => DB::table('tax_rates')->where('active', true)->orderBy('name')->get(),
             'categories' => DB::table('categories')->where('BC', $branch)->orderBy('name')->get(),
             'brands' => DB::table('m_brands')->where('BC', $branch)->orderBy('name')->get(),
-            'suppliers' => DB::table('suppliers')->where('BC', $branch)->orderBy('name')->get(),
-            'customers' => DB::table('customers')->where('BC', $branch)->orderBy('name')->get(),
+            'suppliers' => DB::table('suppliers')->where('BC', $branch)->where('active', true)
+                ->select('id', 'name', 'Code')->orderBy('name')->limit(200)->get(),
+            'customers' => DB::table('customers')->where('BC', $branch)->where('active', true)
+                ->select('id', 'name', 'Code')->orderByRaw("CASE WHEN Code = 'WALK-IN' THEN 0 ELSE 1 END")
+                ->orderBy('name')->limit(200)->get(),
             'promotions' => DB::table('promotions')->where(fn ($q) => $q->whereNull('branch_code')->orWhere('branch_code', $branch))->where('active', true)->get(),
             'company' => DB::table('branch_dels as b')->leftJoin('companies as c', 'c.id', '=', 'b.company_id')->where('b.bccode', $branch)->select('c.*')->first() ?: DB::table('companies')->first(),
             'expense_categories' => DB::table('expense_categories')->where(fn ($q) => $q->whereNull('branch_code')->orWhere('branch_code', $branch))->where('active', true)->orderBy('name')->get(),
@@ -41,7 +44,36 @@ class GroceryController extends Controller
 
     public function products(Request $request)
     {
-        return $this->ok($this->grocery->catalog($request->user(), $request->query('search'), $request->integer('store_id') ?: null));
+        return $this->ok($this->grocery->catalog(
+            $request->user(),
+            $request->query('search'),
+            $request->integer('store_id') ?: null,
+            min(1000, max(10, $request->integer('limit', $request->query('search') ? 100 : 100))),
+            $request->boolean('include_inactive')
+        ));
+    }
+
+    public function lookup(Request $request, string $resource)
+    {
+        $search = trim((string) $request->query('search', ''));
+        $limit = min(100, max(10, $request->integer('limit', 30)));
+        $branch = $request->user()->BC;
+
+        $rows = match ($resource) {
+            'products' => $this->grocery->catalog($request->user(), $search ?: null, $request->integer('store_id') ?: null, $limit),
+            'customers' => DB::table('customers')->where('BC', $branch)->where('active', true)
+                ->when($search, fn ($q) => $q->where(fn ($n) => $n->where('name', 'like', "{$search}%")
+                    ->orWhere('Code', 'like', "{$search}%")->orWhere('phone', 'like', "{$search}%")))
+                ->select('id', 'name', 'Code', 'phone')->orderByRaw("CASE WHEN Code = 'WALK-IN' THEN 0 ELSE 1 END")
+                ->orderBy('name')->limit($limit)->get(),
+            'suppliers' => DB::table('suppliers')->where('BC', $branch)->where('active', true)
+                ->when($search, fn ($q) => $q->where(fn ($n) => $n->where('name', 'like', "{$search}%")
+                    ->orWhere('Code', 'like', "{$search}%")->orWhere('phone', 'like', "{$search}%")))
+                ->select('id', 'name', 'Code', 'phone')->orderBy('name')->limit($limit)->get(),
+            default => abort(404),
+        };
+
+        return $this->ok($rows);
     }
 
     public function storeProduct(Request $request)
@@ -88,7 +120,7 @@ class GroceryController extends Controller
             $this->grocery->audit($user, 'create', 'product', $id, null, null, $data);
             return $id;
         });
-        return $this->ok(collect($this->grocery->catalog($user))->firstWhere('id', $id), 'Product created.');
+        return $this->ok(collect($this->grocery->catalog($user, null, null, 1000, true))->firstWhere('id', $id), 'Product created.');
     }
 
     public function updateProduct(Request $request, int $id)
@@ -136,7 +168,7 @@ class GroceryController extends Controller
             }
             $this->grocery->audit($request->user(), 'update', 'product', $id, $request->input('reason'), $product, $data);
         });
-        return $this->ok(collect($this->grocery->catalog($request->user()))->firstWhere('id', $id), 'Product updated.');
+        return $this->ok(collect($this->grocery->catalog($request->user(), null, null, 1000, true))->firstWhere('id', $id), 'Product updated.');
     }
 
     public function destroyProduct(Request $request, int $id)
@@ -277,8 +309,9 @@ class GroceryController extends Controller
     {
         $query = DB::table('sales')->where('branch_code', $request->user()->BC)
             ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
-            ->when($request->query('from'), fn ($q, $v) => $q->whereDate('sold_at', '>=', $v))
-            ->when($request->query('to'), fn ($q, $v) => $q->whereDate('sold_at', '<=', $v));
+            ->when($request->query('search'), fn ($q, $v) => $q->where(fn ($n) => $n->where('invoice_no', 'like', "{$v}%")->orWhere('hold_reference', 'like', "{$v}%")))
+            ->when($request->query('from'), fn ($q, $v) => $q->where('sold_at', '>=', "{$v} 00:00:00"))
+            ->when($request->query('to'), fn ($q, $v) => $q->where('sold_at', '<=', "{$v} 23:59:59"));
         return $this->ok($query->orderByDesc('sold_at')->paginate(50));
     }
 
@@ -321,6 +354,9 @@ class GroceryController extends Controller
             'lines' => ['required', 'array', 'min:1'], 'lines.*.product_id' => ['required', 'integer'],
             'lines.*.unit_id' => ['required', 'integer'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
             'lines.*.unit_price' => ['nullable', 'numeric', 'min:0'], 'lines.*.discount' => ['nullable', 'numeric', 'min:0'],
+            'bill_discount_type' => ['nullable', Rule::in(['amount', 'percent'])],
+            'bill_discount_value' => ['nullable', 'numeric', 'min:0'],
+            'hold_reference' => ['nullable', 'string', 'max:20'],
             'payments' => [$hold ? 'nullable' : 'required', 'array'], 'payments.*.method' => ['required_with:payments', Rule::in(['cash','card','bank_transfer','mobile','store_credit','credit'])],
             'payments.*.amount' => ['required_with:payments', 'numeric', 'gt:0'], 'payments.*.tendered' => ['nullable', 'numeric', 'min:0'],
             'payments.*.reference' => ['nullable', 'string', 'max:100'],
@@ -356,12 +392,18 @@ class GroceryController extends Controller
 
     public function receipts(Request $request)
     {
-        return $this->ok(DB::table('goods_receipts as g')->join('suppliers as s', 's.id', '=', 'g.supplier_id')->where('g.branch_code', $request->user()->BC)->select('g.*', 's.name as supplier_name')->orderByDesc('g.received_at')->paginate(50));
+        return $this->ok(DB::table('goods_receipts as g')->join('suppliers as s', 's.id', '=', 'g.supplier_id')
+            ->where('g.branch_code', $request->user()->BC)
+            ->when($request->query('search'), fn ($q, $v) => $q->where(fn ($n) => $n->where('g.receipt_no', 'like', "{$v}%")->orWhere('g.supplier_invoice_no', 'like', "{$v}%")->orWhere('s.name', 'like', "{$v}%")))
+            ->select('g.*', 's.name as supplier_name')->orderByDesc('g.received_at')->paginate(50));
     }
 
     public function purchaseOrders(Request $request)
     {
-        return $this->ok(DB::table('grocery_purchase_orders as p')->join('suppliers as s', 's.id', '=', 'p.supplier_id')->where('p.branch_code', $request->user()->BC)->select('p.*', 's.name as supplier_name')->orderByDesc('p.order_date')->paginate(50));
+        return $this->ok(DB::table('grocery_purchase_orders as p')->join('suppliers as s', 's.id', '=', 'p.supplier_id')
+            ->where('p.branch_code', $request->user()->BC)
+            ->when($request->query('search'), fn ($q, $v) => $q->where(fn ($n) => $n->where('p.order_no', 'like', "{$v}%")->orWhere('s.name', 'like', "{$v}%")))
+            ->select('p.*', 's.name as supplier_name')->orderByDesc('p.order_date')->paginate(50));
     }
 
     public function storePurchaseOrder(Request $request)

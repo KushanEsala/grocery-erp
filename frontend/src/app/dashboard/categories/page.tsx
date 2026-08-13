@@ -110,7 +110,7 @@ export default function CategoriesPage() {
             >
               <span
                 className={`h-2 w-2 rounded-full ${
-                  record.parent_id ? 'bg-indigo-400' : 'bg-slate-700'
+                  record.parent_id ? 'bg-[#2d8f63]' : 'bg-[#174a38]'
                 }`}
               />
               {record.name}

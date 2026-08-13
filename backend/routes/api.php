@@ -11,6 +11,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/v1/user', [App\Http\Controllers\Api\V1\Auth\AuthController::class, 'user']);
 
     Route::get('/v1/grocery/options', [GroceryController::class, 'options']);
+    Route::get('/v1/grocery/lookups/{resource}', [GroceryController::class, 'lookup']);
     Route::get('/v1/grocery/dashboard', [GroceryController::class, 'dashboard'])->middleware('role.permission:dashboard');
 
     Route::get('/v1/grocery/products', [GroceryController::class, 'products'])->middleware('role.permission:products');

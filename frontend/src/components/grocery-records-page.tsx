@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Boxes,
@@ -29,6 +29,7 @@ import {
   OperationNotice,
 } from "@/components/operation-ui";
 import { SearchableProductPicker } from "@/components/searchable-product-picker";
+import { SearchableEntityPicker } from "@/components/searchable-entity-picker";
 import { useAuth } from "@/lib/auth-context";
 
 type Module =
@@ -301,10 +302,13 @@ function rowsFromPayload(payload: unknown): Row[] {
 export function GroceryRecordsPage({ module }: { module: Module }) {
   const { hasPermission } = useAuth();
   const config = CONFIG[module];
+  const requiresWorkspaceData = Boolean(config.create);
   const [rows, setRows] = useState<Row[]>([]);
   const [options, setOptions] = useState<GroceryOptions | null>(null);
   const [products, setProducts] = useState<GroceryProduct[]>([]);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ current: 1, last: 1, total: 0 });
   const [report, setReport] = useState("sales");
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -316,6 +320,9 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
   const [form, setForm] = useState<Record<string, string>>({});
   const [lines, setLines] = useState<Array<Record<string, string>>>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(true);
+  const workspaceLoadedRef = useRef(false);
+  const lastAutomaticLoadRef = useRef<string | null>(null);
 
   const permissionModule =
     module === "purchase-orders" || module === "goods-receipts"
@@ -335,34 +342,56 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
     module === "reports" ? `/v1/grocery/reports/${report}` : config.endpoint;
   const load = useCallback(async () => {
     try {
-      const [response, optionResponse, productResponse] = await Promise.all([
-        api.get<unknown>(
-          endpoint +
-            (search
-              ? `${endpoint.includes("?") ? "&" : "?"}search=${encodeURIComponent(search)}`
-              : ""),
-        ),
-        api.get<GroceryOptions>("/v1/grocery/options"),
-        api.get<GroceryProduct[]>("/v1/grocery/products"),
-      ]);
+      const baseRequestUrl = module === "products" ? `${endpoint}?include_inactive=1&limit=100` : endpoint;
+      const searchedUrl = baseRequestUrl +
+        (search
+          ? `${baseRequestUrl.includes("?") ? "&" : "?"}search=${encodeURIComponent(search)}`
+          : "");
+      const requestUrl = `${searchedUrl}${searchedUrl.includes("?") ? "&" : "?"}page=${page}`;
+      const [response, optionResponse, productResponse] = workspaceLoadedRef.current || !requiresWorkspaceData
+        ? [await api.get<unknown>(requestUrl), null, null]
+        : await Promise.all([
+            api.get<unknown>(requestUrl),
+            api.get<GroceryOptions>("/v1/grocery/options"),
+            api.get<GroceryProduct[]>("/v1/grocery/lookups/products?limit=100"),
+          ]);
       let nextRows = rowsFromPayload(response.data);
+      const pagePayload = response.data && typeof response.data === "object"
+        ? response.data as { current_page?: number; last_page?: number; total?: number }
+        : null;
+      setPagination({
+        current: Number(pagePayload?.current_page || 1),
+        last: Number(pagePayload?.last_page || 1),
+        total: Number(pagePayload?.total ?? nextRows.length),
+      });
       if (module === "reorder")
         nextRows = nextRows.filter((row) => Boolean(row.low_stock));
       setRows(nextRows);
-      setOptions(optionResponse.data || null);
-      setProducts(productResponse.data || []);
+      if (!workspaceLoadedRef.current && requiresWorkspaceData) {
+        setOptions(optionResponse?.data || null);
+        setProducts(productResponse?.data || []);
+        workspaceLoadedRef.current = true;
+      }
     } catch (error) {
       setNotice({
         type: "error",
         text: getApiErrorMessage(error, "Could not load this workspace."),
       });
+    } finally {
+      setWorkspaceLoading(false);
     }
-  }, [endpoint, module, search]);
+  }, [endpoint, module, page, requiresWorkspaceData, search]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
+    const key = `${endpoint}|${search}|${page}`;
+    if (lastAutomaticLoadRef.current === key) return;
+    const timer = window.setTimeout(() => {
+      if (lastAutomaticLoadRef.current === key) return;
+      lastAutomaticLoadRef.current = key;
+      void load();
+    }, search ? 220 : 0);
     return () => window.clearTimeout(timer);
-  }, [load]);
+  }, [endpoint, load, page, search]);
 
   const columns = useMemo(() => {
     const preferred: Partial<Record<Module, string[]>> = {
@@ -478,6 +507,10 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
   }
 
   function openCreate() {
+    if (workspaceLoading) {
+      setNotice({ type: "error", text: "Product and master data are still loading. Try again in a moment." });
+      return;
+    }
     if (module === "customer-credit" && !Boolean(options?.company?.customer_credit_enabled)) {
       setNotice({ type: "error", text: "Enable customer credit in Company Settings before recording repayments." });
       return;
@@ -506,6 +539,14 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
       timeZone: String(options?.company?.timezone || "Asia/Colombo"),
     }).format(new Date());
     const initial: Record<string, string> = {};
+    if (module === "products") {
+      initial.base_unit_id = String(options?.units.find((unit) => unit.code === "EA")?.id || options?.units[0]?.id || "");
+      initial.batch_tracked = "false";
+      initial.expiry_tracked = "false";
+      initial.weighted = "false";
+      initial.active = "true";
+      initial.reorder_level = "0";
+    }
     if (module === "purchase-orders") initial.order_date = today;
     if (module === "goods-receipts") initial.supplier_invoice_date = today;
     if (module === "supplier-payments") initial.payment_date = today;
@@ -707,7 +748,6 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
           wholesale_price: numeric("wholesale_price") || null,
           latest_cost: numeric("latest_cost"),
           reorder_level: numeric("reorder_level"),
-          shelf_location: form.shelf_location || null,
           batch_tracked: form.batch_tracked === "true",
           expiry_tracked: form.expiry_tracked === "true",
           weighted: form.weighted === "true",
@@ -868,8 +908,8 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
             product_id: Number(line.product_id),
             unit_id: Number(line.unit_id),
             quantity: Number(line.quantity),
-            unit_cost: Number(line.unit_cost),
             free_quantity: Number(line.free_quantity || 0),
+            unit_cost: Number(line.unit_cost),
           })),
         };
       } else if (module === "goods-receipts") {
@@ -884,9 +924,13 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
             product_id: Number(line.product_id),
             unit_id: Number(line.unit_id),
             quantity: Number(line.quantity),
+            free_quantity: Number(line.free_quantity || 0),
+            accepted_quantity: Number(line.accepted_quantity || line.quantity),
+            rejected_quantity: Number(line.rejected_quantity || 0),
             unit_cost: Number(line.unit_cost),
             selling_price: Number(line.selling_price || 0),
             batch_no: line.batch_no || null,
+            manufactured_date: line.manufactured_date || null,
             expiry_date: line.expiry_date || null,
           })),
         };
@@ -1027,7 +1071,7 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
           ].map((name) => (
             <button
               key={name}
-              onClick={() => setReport(name)}
+              onClick={() => { setReport(name); setPage(1); }}
               className={`rounded-xl px-3 py-2 text-xs font-bold capitalize ${report === name ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-slate-600"}`}
             >
               {name}
@@ -1040,11 +1084,11 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
           <input
             className={`${inputClass} max-w-sm`}
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => { setSearch(event.target.value); setPage(1); }}
             placeholder={`Search ${config.title.toLowerCase()}…`}
           />
           <span className="text-xs font-semibold text-slate-400">
-            {rows.length} records
+            {pagination.total || rows.length} records
           </span>
         </div>
         <div className="overflow-x-auto">
@@ -1171,6 +1215,31 @@ export function GroceryRecordsPage({ module }: { module: Module }) {
             </tbody>
           </table>
         </div>
+        {pagination.last > 1 && (
+          <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-xs">
+            <span className="font-semibold text-slate-500">
+              Page {pagination.current} of {pagination.last}
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={pagination.current <= 1}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                className="rounded-lg border border-slate-200 px-3 py-2 font-bold text-slate-700 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                disabled={pagination.current >= pagination.last}
+                onClick={() => setPage((current) => Math.min(pagination.last, current + 1))}
+                className="rounded-lg border border-slate-200 px-3 py-2 font-bold text-slate-700 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
         {!rows.length && (
           <div className="py-20 text-center text-sm text-slate-400">
             No records match the current view.
@@ -1249,6 +1318,11 @@ function ModuleForm({
   addLine: () => void;
 }) {
   const currency = String(options?.company?.currency || "LKR");
+  const [resolvedProducts, setResolvedProducts] = useState<GroceryProduct[]>([]);
+  const allProducts = useMemo(() => {
+    const merged = new Map([...products, ...resolvedProducts].map((product) => [product.id, product]));
+    return Array.from(merged.values());
+  }, [products, resolvedProducts]);
   const field = (
     name: string,
     label: string,
@@ -1293,15 +1367,18 @@ function ModuleForm({
         label: item.name,
       })),
     );
-  const supplierSelect = () =>
-    select(
-      "supplier_id",
-      "Supplier",
-      (options?.suppliers || []).map((item) => ({
-        value: item.id,
-        label: item.name,
-      })),
-    );
+  const supplierSelect = () => (
+    <OperationField label="Supplier" required>
+      <SearchableEntityPicker
+        key={form.supplier_id || options?.suppliers[0]?.id || 'supplier'}
+        resource="suppliers"
+        items={options?.suppliers || []}
+        value={Number(form.supplier_id) || options?.suppliers[0]?.id}
+        onSelect={(supplier) => set("supplier_id", String(supplier.id))}
+        label="Supplier"
+      />
+    </OperationField>
+  );
   const hasLines = [
     "purchase-orders",
     "goods-receipts",
@@ -1318,25 +1395,10 @@ function ModuleForm({
           <>
             {field("sku", "SKU")}
             {field("name", "Product name")}
-            {field("local_name", "Second-language name", "text", false)}
             {field("barcode", "Barcode(s), separated by commas", "text", false)}
             {select("category_id", "Category", [
               { value: "", label: "No category" },
               ...(options?.categories || []).map((item) => ({
-                value: item.id,
-                label: item.name,
-              })),
-            ])}
-            {select("brand_id", "Brand", [
-              { value: "", label: "No brand" },
-              ...(options?.brands || []).map((item) => ({
-                value: item.id,
-                label: item.name,
-              })),
-            ])}
-            {select("preferred_supplier_id", "Preferred supplier", [
-              { value: "", label: "No preferred supplier" },
-              ...(options?.suppliers || []).map((item) => ({
                 value: item.id,
                 label: item.name,
               })),
@@ -1358,25 +1420,37 @@ function ModuleForm({
             ])}
             {field("latest_cost", "Purchase price", "number")}
             {field("retail_price", "Selling price", "number")}
-            {field("wholesale_price", "Wholesale price", "number", false)}
-            {field("reorder_level", "Reorder level", "number")}
-            {field("shelf_location", "Shelf location", "text", false)}
-            {select("batch_tracked", "Batch tracking", [
-              { value: "false", label: "No" },
-              { value: "true", label: "Yes" },
-            ])}
-            {select("expiry_tracked", "Expiry tracking", [
-              { value: "false", label: "No" },
-              { value: "true", label: "Yes" },
-            ])}
-            {select("weighted", "Weighted product", [
-              { value: "false", label: "No" },
-              { value: "true", label: "Yes" },
-            ])}
-            {select("active", "Status", [
-              { value: "true", label: "Active" },
-              { value: "false", label: "Inactive" },
-            ])}
+            <details className="col-span-full rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+              <summary className="cursor-pointer text-sm font-black text-slate-800">
+                Inventory, supplier and tracking options
+                <span className="ml-2 text-xs font-medium text-slate-500">Open only when needed</span>
+              </summary>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {field("local_name", "Second-language name", "text", false)}
+                {select("brand_id", "Brand", [
+                  { value: "", label: "No brand" },
+                  ...(options?.brands || []).map((item) => ({ value: item.id, label: item.name })),
+                ])}
+                {select("preferred_supplier_id", "Preferred supplier", [
+                  { value: "", label: "No preferred supplier" },
+                  ...(options?.suppliers || []).map((item) => ({ value: item.id, label: item.name })),
+                ])}
+                {field("wholesale_price", "Wholesale price", "number", false)}
+                {field("reorder_level", "Reorder level", "number")}
+                {select("batch_tracked", "Batch tracking", [
+                  { value: "false", label: "No" }, { value: "true", label: "Yes" },
+                ])}
+                {select("expiry_tracked", "Expiry tracking", [
+                  { value: "false", label: "No" }, { value: "true", label: "Yes" },
+                ])}
+                {select("weighted", "Weighted product", [
+                  { value: "false", label: "No" }, { value: "true", label: "Yes" },
+                ])}
+                {select("active", "Status", [
+                  { value: "true", label: "Active" }, { value: "false", label: "Inactive" },
+                ])}
+              </div>
+            </details>
           </>
         )}
         {module === "units" && (
@@ -1432,7 +1506,7 @@ function ModuleForm({
             {select(
               "target_id",
               "Target product",
-              products.map((p) => ({ value: p.id, label: p.name })),
+              allProducts.map((p) => ({ value: p.id, label: p.name })),
             )}
             {field("value", "Discount / price value", "number")}
             {field("minimum_qty", "Minimum quantity", "number")}
@@ -1658,7 +1732,7 @@ function ModuleForm({
           </div>
           <div className="space-y-3 p-4">
             {lines.map((line, index) => {
-              const product = products.find(
+              const product = allProducts.find(
                 (item) => item.id === Number(line.product_id),
               );
               const update = (
@@ -1672,6 +1746,7 @@ function ModuleForm({
                   ),
                 );
               const selectProduct = (selected: GroceryProduct) => {
+                setResolvedProducts((current) => current.some((item) => item.id === selected.id) ? current : [...current, selected]);
                 const unit = selected.units[0];
                 update("product_id", String(selected.id), {
                   unit_id: String(unit?.unit_id || ""),
@@ -1697,7 +1772,7 @@ function ModuleForm({
                       className="lg:col-span-5"
                     >
                       <SearchableProductPicker
-                        products={products}
+                        products={allProducts}
                         value={Number(line.product_id) || undefined}
                         onSelect={selectProduct}
                         currency={currency}
@@ -1791,6 +1866,15 @@ function ModuleForm({
                   </div>
                   {module === "goods-receipts" && (
                     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <OperationField label="Free quantity">
+                        <input className={inputClass} type="number" min="0" step="0.001" value={line.free_quantity || "0"} onChange={(event) => update("free_quantity", event.target.value)} />
+                      </OperationField>
+                      <OperationField label="Accepted quantity">
+                        <input className={inputClass} type="number" min="0" step="0.001" value={line.accepted_quantity || line.quantity || ""} onChange={(event) => update("accepted_quantity", event.target.value)} />
+                      </OperationField>
+                      <OperationField label="Rejected quantity">
+                        <input className={inputClass} type="number" min="0" step="0.001" value={line.rejected_quantity || "0"} onChange={(event) => update("rejected_quantity", event.target.value)} />
+                      </OperationField>
                       <OperationField label="Selling price" required>
                         <input
                           className={inputClass}
@@ -1803,7 +1887,7 @@ function ModuleForm({
                           }
                         />
                       </OperationField>
-                      <OperationField label="Batch number">
+                      <OperationField label="Batch number" required={Boolean(product?.batch_tracked)} help={product?.expiry_tracked && !product?.batch_tracked ? "Generated automatically when left empty." : undefined}>
                         <input
                           className={inputClass}
                           value={line.batch_no || ""}
@@ -1812,7 +1896,15 @@ function ModuleForm({
                           }
                         />
                       </OperationField>
-                      <OperationField label="Expiry date">
+                      <OperationField label="Manufactured date">
+                        <input
+                          className={inputClass}
+                          type="date"
+                          value={line.manufactured_date || ""}
+                          onChange={(event) => update("manufactured_date", event.target.value)}
+                        />
+                      </OperationField>
+                      <OperationField label="Expiry date" required={Boolean(product?.expiry_tracked)}>
                         <input
                           className={inputClass}
                           type="date"

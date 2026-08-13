@@ -46,6 +46,8 @@ export interface GroceryProduct {
   reorder_level?: number;
   shelf_location?: string | null;
   active?: boolean;
+  sold_quantity?: number;
+  sold_count?: number;
   barcodes: string[];
   units: GroceryUnit[];
   batches: GroceryBatch[];
@@ -74,6 +76,8 @@ export interface PosLine {
   quantity: number;
   unitPrice: number;
   discount: number;
+  discountType?: 'amount' | 'percent';
+  discountValue?: number;
 }
 
 export interface DashboardSummary {

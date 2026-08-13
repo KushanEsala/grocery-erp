@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { api, getApiErrorMessage } from './api';
 import type { AuthUser, PermissionAction } from './auth-types';
 
@@ -21,6 +21,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const authCheckStartedRef = useRef(false);
 
   const checkAuth = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
@@ -43,8 +44,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(checkAuth, 0);
-    return () => window.clearTimeout(timer);
+    if (authCheckStartedRef.current) return;
+    authCheckStartedRef.current = true;
+    void checkAuth();
   }, [checkAuth]);
 
   const login = async (email: string, password: string) => {

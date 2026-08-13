@@ -1,8 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Barcode, Search } from 'lucide-react';
 import { GroceryProduct, money } from '@/lib/grocery';
+import { api } from '@/lib/api';
 
 export function SearchableProductPicker({ products, value, onSelect, currency = 'LKR' }: {
   products: GroceryProduct[];
@@ -11,21 +12,47 @@ export function SearchableProductPicker({ products, value, onSelect, currency = 
   currency?: string;
 }) {
   const selected = products.find((product) => product.id === value);
-  const [query, setQuery] = useState(() => selected ? `${selected.sku} — ${selected.name}` : '');
+  const [query, setQuery] = useState(() => selected ? `${selected.sku} - ${selected.name}` : '');
   const [open, setOpen] = useState(false);
+  const [remoteMatches, setRemoteMatches] = useState<GroceryProduct[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (!open || term.length < 2 || (selected && query === `${selected.sku} - ${selected.name}`)) return;
+
+    const timer = window.setTimeout(async () => {
+      setSearching(true);
+      try {
+        const response = await api.get<GroceryProduct[]>(
+          `/v1/grocery/lookups/products?limit=60&search=${encodeURIComponent(term)}`,
+        );
+        setRemoteMatches(response.data || []);
+      } catch {
+        setRemoteMatches([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [open, query, selected]);
 
   const matches = useMemo(() => {
     const term = query.trim().toLowerCase();
-    if (!term || (selected && query === `${selected.sku} — ${selected.name}`)) return products.slice(0, 60);
-    return products.filter((product) =>
+    if (!term || (selected && query === `${selected.sku} - ${selected.name}`)) return products.slice(0, 60);
+    const combined = new Map([...products, ...remoteMatches].map((product) => [product.id, product]));
+    return Array.from(combined.values()).filter((product) =>
       product.sku.toLowerCase().includes(term)
       || product.name.toLowerCase().includes(term)
       || product.barcodes.some((barcode) => barcode.toLowerCase().includes(term))
     ).slice(0, 60);
-  }, [products, query, selected]);
+  }, [products, query, remoteMatches, selected]);
 
   function choose(product: GroceryProduct) {
-    onSelect(product); setQuery(`${product.sku} — ${product.name}`); setOpen(false);
+    onSelect(product);
+    setQuery(`${product.sku} - ${product.name}`);
+    setRemoteMatches([]);
+    setOpen(false);
   }
 
   return <div className="relative">
@@ -36,21 +63,28 @@ export function SearchableProductPicker({ products, value, onSelect, currency = 
         value={query}
         onFocus={(event) => { setOpen(true); event.currentTarget.select(); }}
         onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-        onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+        onChange={(event) => { setQuery(event.target.value); setRemoteMatches([]); setOpen(true); }}
         onKeyDown={(event) => {
           if (event.key !== 'Enter') return;
           event.preventDefault();
-          const exact = products.find((product) => product.sku.toLowerCase() === query.trim().toLowerCase() || product.barcodes.includes(query.trim()));
-          if (exact) choose(exact); else if (matches.length === 1) choose(matches[0]);
+          const exact = [...products, ...remoteMatches].find((product) =>
+            product.sku.toLowerCase() === query.trim().toLowerCase()
+            || product.barcodes.includes(query.trim())
+          );
+          if (exact) choose(exact);
+          else if (matches.length === 1) choose(matches[0]);
         }}
         placeholder="Scan barcode or search by SKU or product name"
         className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
       />
     </div>
     {open && <div className="absolute z-[90] mt-2 max-h-72 w-full min-w-[360px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-900/15">
-      <div className="flex items-center gap-2 px-2 pb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400"><Search className="h-3.5 w-3.5" />{matches.length} matches from {products.length} products</div>
+      <div className="flex items-center gap-2 px-2 pb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+        <Search className="h-3.5 w-3.5" />
+        {searching ? 'Searching full catalogue...' : `${matches.length} matches`}
+      </div>
       {matches.map((product) => <button type="button" key={product.id} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(product)} className="grid w-full grid-cols-[1fr_auto] gap-4 rounded-xl px-3 py-2.5 text-left hover:bg-emerald-50">
-        <span><span className="block text-sm font-bold text-slate-900">{product.name}</span><span className="font-mono text-[11px] text-slate-500">{product.sku}{product.barcodes[0] ? ` · ${product.barcodes[0]}` : ''}</span></span>
+        <span><span className="block text-sm font-bold text-slate-900">{product.name}</span><span className="font-mono text-[11px] text-slate-500">{product.sku}{product.barcodes[0] ? ` / ${product.barcodes[0]}` : ''}</span></span>
         <span className="text-right"><span className="block text-xs font-bold text-emerald-700">Sell {money(product.retail_price, currency)}</span><span className="text-[11px] text-slate-500">Buy {money(product.latest_cost, currency)}</span></span>
       </button>)}
       {!matches.length && <div className="px-3 py-8 text-center text-sm text-slate-500">No product matches this barcode or search.</div>}

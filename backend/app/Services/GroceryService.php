@@ -44,17 +44,25 @@ class GroceryService
         ]);
     }
 
-    public function catalog(User $user, ?string $search = null, ?int $storeId = null): array
+    public function catalog(User $user, ?string $search = null, ?int $storeId = null, int $limit = 100, bool $includeInactive = false): array
     {
         $storeId ??= (int) DB::table('stores')->where('BC', $user->BC)->value('id');
+        $salesTotals = DB::table('sale_lines as sl')
+            ->join('sales as s', 's.id', '=', 'sl.sale_id')
+            ->where('s.branch_code', $user->BC)
+            ->whereNotIn('s.status', ['held', 'voided'])
+            ->where('s.sold_at', '>=', now()->subDays(90))
+            ->groupBy('sl.product_id')
+            ->selectRaw('sl.product_id, SUM(sl.quantity) as sold_quantity, COUNT(*) as sold_count');
         $products = DB::table('products as p')
             ->leftJoin('units as u', 'u.id', '=', 'p.base_unit_id')
             ->leftJoin('tax_rates as t', 't.id', '=', 'p.tax_rate_id')
             ->leftJoin('categories as c', 'c.id', '=', 'p.category_id')
             ->leftJoin('m_brands as br', 'br.id', '=', 'p.brand_id')
             ->leftJoin('suppliers as sp', 'sp.id', '=', 'p.preferred_supplier_id')
+            ->leftJoinSub($salesTotals, 'sales_totals', 'sales_totals.product_id', '=', 'p.id')
             ->where('p.branch_code', $user->BC)
-            ->where('p.active', true)
+            ->when(! $includeInactive, fn ($query) => $query->where('p.active', true))
             ->when($search, function ($query, $search) {
                 $query->where(function ($nested) use ($search) {
                     $nested->where('p.sku', 'like', "%{$search}%")
@@ -65,19 +73,31 @@ class GroceryService
                         });
                 });
             })
-            ->select('p.*', 'u.code as base_unit_code', 'u.name as base_unit_name', 't.rate as tax_rate', 't.inclusive as tax_inclusive', 't.name as tax_name', 'c.name as category_name', 'br.name as brand_name', 'sp.name as preferred_supplier_name')
-            ->orderBy('p.name')->limit($search ? 100 : 1000)->get();
+            ->select('p.*', 'u.code as base_unit_code', 'u.name as base_unit_name', 't.rate as tax_rate', 't.inclusive as tax_inclusive', 't.name as tax_name', 'c.name as category_name', 'br.name as brand_name', 'sp.name as preferred_supplier_name', DB::raw('COALESCE(sales_totals.sold_quantity, 0) as sold_quantity'), DB::raw('COALESCE(sales_totals.sold_count, 0) as sold_count'))
+            ->orderBy('p.name')->limit($limit)->get();
 
-        return $products->map(function ($product) use ($storeId) {
-            $product->barcodes = DB::table('product_barcodes')->where('product_id', $product->id)->pluck('barcode');
-            $product->units = DB::table('product_units as pu')->join('units as u', 'u.id', '=', 'pu.unit_id')
-                ->where('pu.product_id', $product->id)
-                ->select('pu.*', 'u.code', 'u.name', 'u.decimal_places')->get();
-            $product->stock = $this->stockQuantity($product->id, $storeId);
-            $product->batches = DB::table('product_batches')->where('product_id', $product->id)
-                ->where('store_id', $storeId)->where('quantity', '>', 0)
-                ->orderByRaw('CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END')->orderBy('expiry_date')
-                ->get();
+        $productIds = $products->pluck('id');
+        if ($productIds->isEmpty()) return [];
+
+        $barcodes = DB::table('product_barcodes')->whereIn('product_id', $productIds)
+            ->orderByDesc('primary')->get()->groupBy('product_id');
+        $units = DB::table('product_units as pu')->join('units as u', 'u.id', '=', 'pu.unit_id')
+            ->whereIn('pu.product_id', $productIds)
+            ->select('pu.*', 'u.code', 'u.name', 'u.decimal_places')->get()->groupBy('product_id');
+        $stocks = DB::table('inventory_movements')->where('branch_code', $user->BC)
+            ->where('store_id', $storeId)->whereIn('product_id', $productIds)
+            ->groupBy('product_id')->selectRaw('product_id, COALESCE(SUM(quantity_in - quantity_out), 0) stock')
+            ->pluck('stock', 'product_id');
+        $batches = DB::table('product_batches')->where('branch_code', $user->BC)
+            ->where('store_id', $storeId)->whereIn('product_id', $productIds)->where('quantity', '>', 0)
+            ->orderByRaw('CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END')->orderBy('expiry_date')
+            ->get()->groupBy('product_id');
+
+        return $products->map(function ($product) use ($barcodes, $units, $stocks, $batches) {
+            $product->barcodes = collect($barcodes->get($product->id, []))->pluck('barcode')->values();
+            $product->units = collect($units->get($product->id, []))->values();
+            $product->stock = (float) ($stocks[$product->id] ?? 0);
+            $product->batches = collect($batches->get($product->id, []))->values();
             return $product;
         })->all();
     }
@@ -98,15 +118,21 @@ class GroceryService
             ->select('p.id', 'p.sku', 'p.name', 'p.reorder_level', 'p.average_cost', 'p.expiry_tracked', 'u.code as unit', 'c.name as category')
             ->orderBy('p.name')->get();
 
-        return $rows->map(function ($row) use ($user, $storeId) {
-            $movement = DB::table('inventory_movements')->where('branch_code', $user->BC)
-                ->where('product_id', $row->id)->when($storeId, fn ($q, $id) => $q->where('store_id', $id));
-            $row->quantity = (float) (clone $movement)->selectRaw('COALESCE(SUM(quantity_in - quantity_out), 0) q')->value('q');
+        $productIds = $rows->pluck('id');
+        $quantities = DB::table('inventory_movements')->where('branch_code', $user->BC)
+            ->whereIn('product_id', $productIds)->when($storeId, fn ($q, $id) => $q->where('store_id', $id))
+            ->groupBy('product_id')->selectRaw('product_id, COALESCE(SUM(quantity_in - quantity_out), 0) quantity')
+            ->pluck('quantity', 'product_id');
+        $nearExpiry = DB::table('product_batches')->where('branch_code', $user->BC)
+            ->whereIn('product_id', $productIds)->when($storeId, fn ($q, $id) => $q->where('store_id', $id))
+            ->where('quantity', '>', 0)->whereBetween('expiry_date', [today(), today()->addDays(30)])
+            ->groupBy('product_id')->selectRaw('product_id, COUNT(*) near_expiry')->pluck('near_expiry', 'product_id');
+
+        return $rows->map(function ($row) use ($quantities, $nearExpiry) {
+            $row->quantity = (float) ($quantities[$row->id] ?? 0);
             $row->stock_value = round($row->quantity * (float) $row->average_cost, 2);
             $row->low_stock = $row->quantity <= (float) $row->reorder_level;
-            $row->near_expiry = DB::table('product_batches')->where('branch_code', $user->BC)
-                ->where('product_id', $row->id)->when($storeId, fn ($q, $id) => $q->where('store_id', $id))
-                ->where('quantity', '>', 0)->whereBetween('expiry_date', [today(), today()->addDays(30)])->count();
+            $row->near_expiry = (int) ($nearExpiry[$row->id] ?? 0);
             return $row;
         })->all();
     }
@@ -210,6 +236,27 @@ class GroceryService
                 $subtotal += $gross; $discountTotal += $discount; $taxTotal += $tax;
                 $costTotal += $baseQty * (float) $product->average_cost; $grandTotal += $total;
             }
+
+            $billDiscountValue = max(0, (float) ($data['bill_discount_value'] ?? 0));
+            $billDiscount = ($data['bill_discount_type'] ?? 'amount') === 'percent'
+                ? round($grandTotal * min(100, $billDiscountValue) / 100, 2)
+                : round(min($grandTotal, $billDiscountValue), 2);
+            if ($billDiscount > 0 && $grandTotal > 0) {
+                $remainingBillDiscount = $billDiscount;
+                $lastPreparedIndex = array_key_last($prepared);
+                foreach ($prepared as $preparedIndex => &$preparedLine) {
+                    $share = $preparedIndex === $lastPreparedIndex
+                        ? $remainingBillDiscount
+                        : round($billDiscount * ($preparedLine['total'] / $grandTotal), 2);
+                    $share = min($share, $preparedLine['total']);
+                    $preparedLine['discount'] += $share;
+                    $preparedLine['total'] = round($preparedLine['total'] - $share, 2);
+                    $remainingBillDiscount = round($remainingBillDiscount - $share, 2);
+                }
+                unset($preparedLine);
+                $discountTotal += $billDiscount;
+                $grandTotal -= $billDiscount;
+            }
             $grand = round($grandTotal, 2);
             if (! $hold) {
                 $paid = round(collect($data['payments'])->sum(fn ($p) => (float) $p['amount']), 2);
@@ -235,7 +282,9 @@ class GroceryService
                 'invoice_no' => $this->nextNumber($user->BC, 'sale'), 'branch_code' => $user->BC,
                 'store_id' => $store->id, 'register_id' => $data['register_id'] ?? $shift?->register_id,
                 'shift_id' => $shift?->id, 'customer_id' => $data['customer_id'] ?? null, 'sold_at' => now(),
-                'status' => $hold ? 'held' : 'completed', 'subtotal' => round($subtotal, 2),
+                'status' => $hold ? 'held' : 'completed',
+                'hold_reference' => $hold ? ($data['hold_reference'] ?? null) : null,
+                'subtotal' => round($subtotal, 2),
                 'discount_total' => round($discountTotal, 2), 'tax_total' => round($taxTotal, 2),
                 'grand_total' => $grand, 'cost_total' => round($costTotal, 2), 'notes' => $data['notes'] ?? null,
                 'created_by' => $user->id, 'created_at' => now(), 'updated_at' => now(),
@@ -292,7 +341,7 @@ class GroceryService
 
     private function allocateStock(User $user, int $storeId, object $product, float $quantity): array
     {
-        if (! $product->batch_tracked) {
+        if (! $product->batch_tracked && ! $product->expiry_tracked) {
             if ($this->stockQuantity($product->id, $storeId) + 0.000001 < $quantity) {
                 throw ValidationException::withMessages(['stock' => "Insufficient stock for {$product->name}."]);
             }
@@ -418,15 +467,26 @@ class GroceryService
                 if ($product->expiry_tracked && empty($line['expiry_date'])) throw ValidationException::withMessages(["lines.{$index}.expiry_date" => 'Expiry date is required.']);
                 if ($product->expiry_tracked && Carbon::parse($line['expiry_date'])->lt(today())) throw ValidationException::withMessages(["lines.{$index}.expiry_date" => 'Expired stock cannot be received.']);
                 $batchId = null;
-                if ($product->batch_tracked) {
-                    if (empty($line['batch_no'])) throw ValidationException::withMessages(["lines.{$index}.batch_no" => 'Batch number is required.']);
+                $batchNo = $line['batch_no'] ?? null;
+                if ($product->batch_tracked || $product->expiry_tracked) {
+                    if ($product->batch_tracked && empty($batchNo)) throw ValidationException::withMessages(["lines.{$index}.batch_no" => 'Batch number is required.']);
+                    if (! $batchNo) $batchNo = sprintf('EXP-%s-%d-%d', Carbon::parse($line['expiry_date'])->format('Ymd'), $receiptId, $index + 1);
                     $batch = DB::table('product_batches')->where('branch_code', $user->BC)->where('store_id', $store->id)
-                        ->where('product_id', $product->id)->where('batch_no', $line['batch_no'])->lockForUpdate()->first();
-                    if ($batch) { $batchId = $batch->id; }
+                        ->where('product_id', $product->id)->where('batch_no', $batchNo)->lockForUpdate()->first();
+                    if ($batch) {
+                        $batchId = $batch->id;
+                        DB::table('product_batches')->where('id', $batchId)->update([
+                            'manufactured_date' => $line['manufactured_date'] ?? $batch->manufactured_date,
+                            'expiry_date' => $line['expiry_date'] ?? $batch->expiry_date,
+                            'unit_cost' => $unitCost,
+                            'selling_price' => $line['selling_price'] ?? $batch->selling_price ?? $product->retail_price,
+                            'updated_at' => now(),
+                        ]);
+                    }
                     else {
                         $batchId = DB::table('product_batches')->insertGetId([
                             'branch_code' => $user->BC, 'store_id' => $store->id, 'product_id' => $product->id,
-                            'batch_no' => $line['batch_no'], 'manufactured_date' => $line['manufactured_date'] ?? null,
+                            'batch_no' => $batchNo, 'manufactured_date' => $line['manufactured_date'] ?? null,
                             'expiry_date' => $line['expiry_date'] ?? null, 'quantity' => 0, 'unit_cost' => $unitCost,
                             'selling_price' => $line['selling_price'] ?? $product->retail_price, 'created_at' => now(), 'updated_at' => now(),
                         ]);
@@ -447,7 +507,7 @@ class GroceryService
                     'conversion_factor' => $unit->conversion_factor, 'quantity' => $qty, 'free_quantity' => $free,
                     'accepted_quantity' => $accepted, 'rejected_quantity' => $line['rejected_quantity'] ?? 0,
                     'unit_cost' => $line['unit_cost'], 'selling_price' => $line['selling_price'] ?? null, 'line_total' => $lineTotal,
-                    'batch_no' => $line['batch_no'] ?? null, 'manufactured_date' => $line['manufactured_date'] ?? null,
+                    'batch_no' => $batchNo, 'manufactured_date' => $line['manufactured_date'] ?? null,
                     'expiry_date' => $line['expiry_date'] ?? null, 'created_at' => now(), 'updated_at' => now(),
                 ]);
                 $this->moveStock($user, $store->id, $product->id, $batchId, 'goods_receipt', $receiptNo, $baseQty, 0, $unitCost);
@@ -704,7 +764,8 @@ class GroceryService
     public function dashboard(User $user, ?string $from = null, ?string $to = null): array
     {
         $from ??= today()->toDateString(); $to ??= today()->toDateString();
-        $sales = DB::table('sales')->where('branch_code', $user->BC)->where('status', '!=', 'held')->where('status', '!=', 'voided')->whereBetween(DB::raw('date(sold_at)'), [$from, $to]);
+        $sales = DB::table('sales')->where('branch_code', $user->BC)->where('status', '!=', 'held')->where('status', '!=', 'voided')
+            ->whereBetween('sold_at', [Carbon::parse($from)->startOfDay(), Carbon::parse($to)->endOfDay()]);
         $summary = (clone $sales)->selectRaw('COALESCE(SUM(grand_total),0) sales, COALESCE(SUM(cost_total),0) cost, COUNT(*) transactions, COALESCE(AVG(grand_total),0) average_basket')->first();
         $inventory = $this->inventory($user);
         return [
@@ -715,7 +776,7 @@ class GroceryService
             'open_shifts' => DB::table('cashier_shifts')->where('branch_code', $user->BC)->where('status', 'open')->count(),
             'recent_sales' => (clone $sales)->orderByDesc('sold_at')->limit(8)->get(),
             'payment_methods' => DB::table('sale_payments as sp')->join('sales as s', 's.id', '=', 'sp.sale_id')
-                ->where('s.branch_code', $user->BC)->whereBetween(DB::raw('date(s.sold_at)'), [$from, $to])->groupBy('sp.method')->selectRaw('sp.method, SUM(sp.amount) total')->get(),
+                ->where('s.branch_code', $user->BC)->whereBetween('s.sold_at', [Carbon::parse($from)->startOfDay(), Carbon::parse($to)->endOfDay()])->groupBy('sp.method')->selectRaw('sp.method, SUM(sp.amount) total')->get(),
         ];
     }
 }

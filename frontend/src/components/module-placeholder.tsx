@@ -12,7 +12,7 @@ export function ModulePlaceholder({
   return (
     <div className="flex min-h-[62vh] items-center justify-center">
       <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm sm:p-12">
-        <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 ring-1 ring-inset ring-indigo-100">
+        <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#dff3e7] text-[#237a55] ring-1 ring-inset ring-[#c5e8d2]">
           <Icon className="h-8 w-8" strokeWidth={1.8} />
         </span>
         <span className="mt-6 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">

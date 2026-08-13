@@ -222,7 +222,7 @@ export default function BackupsPage() {
               type="button"
               onClick={() => void createBackup('continue')}
               disabled={runningMode !== null}
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#237a55] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#174a38] disabled:cursor-not-allowed disabled:bg-slate-300"
             >
               {runningMode === 'continue' ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -289,7 +289,7 @@ export default function BackupsPage() {
               {loading ? (
                 <tr>
                   <td colSpan={7} className="px-6 py-16 text-center text-slate-400">
-                    <LoaderCircle className="mx-auto mb-2 h-5 w-5 animate-spin text-indigo-600" />
+                    <LoaderCircle className="mx-auto mb-2 h-5 w-5 animate-spin text-[#237a55]" />
                     Loading backup history...
                   </td>
                 </tr>
@@ -344,7 +344,7 @@ export default function BackupsPage() {
                       <div className="flex justify-end gap-2"><button
                         type="button"
                         onClick={() => void downloadBackup(backup)}
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-[#2d8f63] hover:bg-[#eff9f2] hover:text-[#174a38]"
                       >
                         <Download className="h-4 w-4" />
                         Download ZIP
@@ -435,11 +435,11 @@ function ActionCard({
   const styles =
     accent === 'amber'
       ? 'border-amber-200 bg-amber-50/70'
-      : 'border-indigo-200 bg-indigo-50/70';
+      : 'border-[#c5e8d2] bg-[#eff9f2]/70';
   const iconStyles =
     accent === 'amber'
       ? 'bg-amber-100 text-amber-700 ring-amber-200'
-      : 'bg-indigo-100 text-indigo-700 ring-indigo-200';
+      : 'bg-[#dff3e7] text-[#237a55] ring-[#c5e8d2]';
 
   return (
     <section className={`rounded-3xl border p-6 shadow-sm ${styles}`}>
@@ -469,7 +469,7 @@ function ModePill({ mode }: { mode: BackupMode }) {
   const styles =
     mode === 'refresh'
       ? 'bg-amber-50 text-amber-700 ring-amber-200'
-      : 'bg-indigo-50 text-indigo-700 ring-indigo-200';
+      : 'bg-[#eff9f2] text-[#237a55] ring-[#c5e8d2]';
 
   return (
     <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ring-1 ring-inset ${styles}`}>

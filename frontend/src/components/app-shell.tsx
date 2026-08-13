@@ -194,9 +194,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50">
-        <div className="flex items-center gap-3 text-sm font-semibold text-slate-500">
-          <span className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+      <div className="flex min-h-screen items-center justify-center bg-[#f4f7f3]">
+        <div className="flex items-center gap-3 text-sm font-semibold text-slate-600">
+          <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#237a55] border-t-transparent" />
           Loading workspace...
         </div>
       </div>
@@ -213,7 +213,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     .toUpperCase();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-950">
+    <div className="flex h-screen overflow-hidden bg-[#f4f7f3] text-[#17211c]">
       {mobileOpen && (
         <button
           type="button"
@@ -224,22 +224,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex h-screen shrink-0 flex-col border-r border-slate-200 bg-white text-slate-950 shadow-2xl shadow-slate-950/10 transition-all duration-300 print:hidden lg:relative lg:inset-auto lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex h-screen shrink-0 flex-col border-r border-white/10 bg-[#12382b] text-white shadow-2xl shadow-slate-950/20 transition-all duration-300 print:hidden lg:relative lg:inset-auto lg:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         } ${collapsed ? 'w-20' : 'w-72'}`}
       >
-        <div className="border-b border-slate-200 px-3 py-3">
+        <div className="market-stripe h-1 shrink-0" aria-hidden="true" />
+        <div className="border-b border-white/10 px-3 py-3">
           <div className="flex items-center justify-between gap-2">
           <Link href="/dashboard" className="flex min-w-0 items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#e3a32b] text-[#12382b] shadow-sm ring-1 ring-white/20">
               <ShoppingCart className="h-5 w-5" strokeWidth={2.2} />
             </span>
             {!collapsed && (
               <span className="min-w-0">
-                <span className="block truncate text-sm font-bold tracking-wide text-slate-950">
+                <span className="block truncate text-sm font-bold tracking-wide text-white">
                   Grocery ERP
                 </span>
-                <span className="block truncate text-xs text-slate-500">
+                <span className="block truncate text-xs text-emerald-100/70">
                   Retail operations
                 </span>
               </span>
@@ -249,7 +250,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="hidden rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-950 lg:inline-flex"
+            className="hidden rounded-lg p-2 text-emerald-100/65 transition hover:bg-white/10 hover:text-white lg:inline-flex"
             onClick={() => setCollapsed((value) => !value)}
           >
             {collapsed ? (
@@ -262,7 +263,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             aria-label="Close navigation"
-            className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-950 lg:hidden"
+            className="rounded-lg p-2 text-emerald-100/65 transition hover:bg-white/10 hover:text-white lg:hidden"
             onClick={() => setMobileOpen(false)}
           >
             <X className="h-5 w-5" />
@@ -270,27 +271,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div
-            className={`mt-3 flex items-center rounded-xl border border-slate-200 bg-slate-50 ${
+            className={`mt-3 flex items-center rounded-xl border border-white/10 bg-white/[0.06] ${
               collapsed ? 'justify-center p-2' : 'gap-2 p-2'
             }`}
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-xs font-bold text-slate-900 shadow-sm ring-1 ring-slate-200">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#eff9f2] text-xs font-bold text-[#174a38] shadow-sm ring-1 ring-white/20">
               {initials}
             </span>
             {!collapsed && (
               <>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold text-slate-950">
+                  <span className="block truncate text-sm font-semibold text-white">
                     {user?.username}
                   </span>
-                  <span className="block truncate text-xs text-slate-500">
+                  <span className="block truncate text-xs text-emerald-100/65">
                     {user?.role?.name} / {user?.BC}
                   </span>
                 </span>
                 <button
                   type="button"
                   title="Sign out"
-                  className="rounded-lg p-2 text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
+                  className="rounded-lg p-2 text-emerald-100/60 transition hover:bg-rose-400/15 hover:text-rose-200"
                   onClick={logout}
                 >
                   <LogOut className="h-4 w-4" />
@@ -303,7 +304,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               title="Sign out"
-              className="mt-2 flex w-full items-center justify-center rounded-lg p-2 text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
+              className="mt-2 flex w-full items-center justify-center rounded-lg p-2 text-emerald-100/60 transition hover:bg-rose-400/15 hover:text-rose-200"
               onClick={logout}
             >
               <LogOut className="h-4 w-4" />
@@ -329,8 +330,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     }
                     className={`mb-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-bold uppercase tracking-[0.12em] transition ${
                       selectedGroup === group.label
-                        ? 'bg-slate-100 text-slate-950'
-                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+                        ? 'bg-white/10 text-white'
+                        : 'text-emerald-100/55 hover:bg-white/[0.06] hover:text-emerald-50'
                     }`}
                   >
                     <span className="min-w-0 flex-1 truncate">
@@ -366,15 +367,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                             : 'gap-3 px-3 py-2.5'
                         } ${
                           active
-                            ? 'bg-slate-950 text-white shadow-lg shadow-slate-200'
-                            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
+                            ? 'bg-[#eff9f2] text-[#12382b] shadow-lg shadow-black/15'
+                            : 'text-emerald-50/75 hover:bg-white/[0.08] hover:text-white'
                         }`}
                       >
                         <Icon
                           className={`h-[18px] w-[18px] shrink-0 transition ${
                             active
-                              ? 'text-white'
-                              : 'text-slate-400 group-hover:text-slate-700'
+                              ? 'text-[#237a55]'
+                              : 'text-emerald-100/45 group-hover:text-emerald-100'
                           }`}
                           strokeWidth={2}
                         />
@@ -398,11 +399,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur print:hidden lg:hidden">
+        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-[#dce5de] bg-white/95 px-4 backdrop-blur print:hidden lg:hidden">
           <button
             type="button"
             aria-label="Open navigation"
-            className="rounded-xl border border-slate-200 p-2 text-slate-600 shadow-sm"
+            className="rounded-xl border border-[#dce5de] p-2 text-[#174a38] shadow-sm"
             onClick={() => setMobileOpen(true)}
           >
             <Menu className="h-5 w-5" />
@@ -417,8 +418,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
+        <header className="sticky top-0 z-30 hidden h-16 shrink-0 items-center justify-between border-b border-[#dce5de] bg-white/92 px-6 backdrop-blur print:hidden lg:flex">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-bold text-[#17211c]">{currentPage}</p>
+            <p className="truncate text-xs text-slate-500">{user?.BC} branch · Grocery operations</p>
+          </div>
+          <nav aria-label="Quick actions" className="flex items-center gap-2">
+            <Link href="/dashboard/products" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-[#eff9f2] hover:text-[#174a38]">
+              <Package className="h-4 w-4" /> Products
+            </Link>
+            <Link href="/dashboard/goods-receipts" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-[#eff9f2] hover:text-[#174a38]">
+              <PackageCheck className="h-4 w-4" /> Receive stock
+            </Link>
+            <Link href="/dashboard/pos" className="inline-flex items-center gap-2 rounded-lg bg-[#237a55] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#174a38]">
+              <ShoppingCart className="h-4 w-4" /> Open POS
+            </Link>
+          </nav>
+        </header>
+
         <main className="content-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8">
+          <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-7">
             {children}
           </div>
         </main>

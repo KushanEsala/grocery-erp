@@ -17,6 +17,15 @@ new PDO($dsn, getenv("DB_USERNAME"), getenv("DB_PASSWORD"));
 done
 
 php artisan migrate --force
-php artisan db:seed --force
+
+if [ "${RUN_DATABASE_SEEDER:-false}" = "true" ]; then
+    php artisan db:seed --force
+fi
+
+php artisan optimize:clear
+php artisan config:cache
+php artisan route:cache
+
+chown -R www-data:www-data storage bootstrap/cache
 
 exec "$@"
