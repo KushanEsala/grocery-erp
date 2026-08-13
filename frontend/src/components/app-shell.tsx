@@ -40,6 +40,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { DeveloperFooter } from '@/components/developer-footer';
 
 interface NavItem {
   label: string;
@@ -437,8 +438,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
 
         <main className="content-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-7">
-            {children}
+          <div className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col">
+            <div className="flex-1 p-4 sm:p-6 lg:p-7">
+              {children}
+            </div>
+            <div className="border-t border-[#dce5de] px-4 py-4 print:hidden sm:px-6 lg:px-7">
+              <DeveloperFooter />
+            </div>
           </div>
         </main>
       </div>

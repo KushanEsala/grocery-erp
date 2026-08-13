@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { getApiErrorMessage } from '@/lib/api';
+import { DeveloperFooter } from '@/components/developer-footer';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('admin@erp.com');
@@ -45,7 +46,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#e9f0eb] p-4 sm:p-8">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-[#e9f0eb] p-4 sm:p-8">
       <main className="grid w-full max-w-4xl overflow-hidden rounded-3xl bg-white shadow-2xl shadow-[#12382b]/15 ring-1 ring-[#12382b]/10 md:grid-cols-[.9fr_1.1fr]">
         <section className="relative hidden min-h-[610px] flex-col justify-between overflow-hidden bg-[#12382b] p-10 text-white md:flex">
           <div className="market-stripe absolute inset-x-0 top-0 h-1.5" aria-hidden="true" />
@@ -145,6 +146,7 @@ export default function LoginPage() {
           </div>
         </section>
       </main>
+      <DeveloperFooter />
     </div>
   );
 }
