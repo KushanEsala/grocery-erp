@@ -6,6 +6,7 @@ use App\Models\User;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
@@ -262,6 +263,59 @@ class GroceryWorkflowTest extends TestCase
         $this->getJson('/api/v1/grocery/reports/inventory')->assertOk();
         $this->getJson('/api/v1/hp')->assertNotFound();
         $this->getJson('/api/v1/service-tickets')->assertNotFound();
+    }
+
+    public function test_every_user_can_change_password_only_after_confirming_current_password(): void
+    {
+        $otherToken = $this->admin->createToken('another-device');
+
+        $this->putJson('/api/v1/user/password', [
+            'current_password' => 'not-the-current-password',
+            'password' => 'new-secure-password',
+            'password_confirmation' => 'new-secure-password',
+        ])->assertUnprocessable()->assertJsonValidationErrors('current_password');
+
+        $this->assertTrue(Hash::check((string) env('ERP_DEMO_PASSWORD', 'password'), $this->admin->fresh()->password));
+
+        $this->putJson('/api/v1/user/password', [
+            'current_password' => (string) env('ERP_DEMO_PASSWORD', 'password'),
+            'password' => 'new-secure-password',
+            'password_confirmation' => 'new-secure-password',
+        ])->assertOk()->assertJsonPath('message', 'Password changed successfully. Other signed-in devices have been logged out.');
+
+        $this->assertTrue(Hash::check('new-secure-password', $this->admin->fresh()->password));
+        $this->assertDatabaseMissing('personal_access_tokens', ['id' => $otherToken->accessToken->id]);
+    }
+
+    public function test_super_admin_can_edit_and_safely_delete_user_accounts(): void
+    {
+        $manager = User::where('email', 'manager@erp.com')->firstOrFail();
+        $cashier = User::where('email', 'cashier@erp.com')->firstOrFail();
+        $managerRoleId = (int) DB::table('roles')->where('name', 'Manager')->value('id');
+
+        $manager->createToken('manager-device');
+        $this->putJson("/api/v1/users/{$manager->id}", [
+            'username' => 'shop-manager',
+            'email' => 'shop.manager@example.com',
+            'role_id' => $managerRoleId,
+        ])->assertOk()->assertJsonPath('data.username', 'shop-manager');
+
+        $this->deleteJson("/api/v1/users/{$this->admin->id}")
+            ->assertUnprocessable()->assertJsonPath('message', 'You cannot delete your own account.');
+
+        $this->putJson("/api/v1/users/{$this->admin->id}", ['role_id' => $managerRoleId])
+            ->assertUnprocessable()->assertJsonPath('message', 'You cannot change your own role while signed in.');
+
+        $this->deleteJson("/api/v1/users/{$manager->id}")
+            ->assertOk()->assertJsonPath('message', 'User account deleted. Historical transactions were preserved.');
+
+        $this->assertSoftDeleted('users', ['id' => $manager->id]);
+        $this->assertDatabaseMissing('personal_access_tokens', ['tokenable_id' => $manager->id]);
+
+        $this->deleteJson("/api/v1/users/{$cashier->id}")->assertOk();
+        $this->getJson('/api/v1/users')->assertOk()
+            ->assertJsonMissing(['email' => 'shop.manager@example.com'])
+            ->assertJsonMissing(['email' => 'cashier@erp.com']);
     }
 
     public function test_purchase_order_rejects_invalid_picker_values_and_preserves_product_prices(): void

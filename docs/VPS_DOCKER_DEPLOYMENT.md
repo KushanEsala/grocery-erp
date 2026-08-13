@@ -9,7 +9,7 @@ This deployment runs Grocery ERP in its own Docker Compose project while using t
 | Public application | `https://pos.kushanesala.me` |
 | Frontend container | `127.0.0.1:3002` |
 | Laravel API container | `127.0.0.1:8009` |
-| Adminer (optional profile) | `127.0.0.1:8081` |
+| phpMyAdmin (optional profile) | `127.0.0.1:8081` |
 | MySQL | Existing host service on `3306` |
 
 ## Required server specifications
@@ -118,32 +118,38 @@ docker compose ps
 
 The API entrypoint runs pending migrations and rebuilds Laravel production caches. It does not seed unless `RUN_DATABASE_SEEDER=true` is explicitly configured.
 
-## Database viewer
+## phpMyAdmin database dashboard
 
-Adminer is optional and binds only to localhost:
+phpMyAdmin is optional and binds only to VPS localhost. It is not exposed through `pos.kushanesala.me` or directly through the public server IP.
+
+Start it on the VPS only when database access is needed:
 
 ```bash
-docker compose --profile tools up -d adminer
+cd /var/www/grocery-erp
+docker compose --profile tools up -d phpmyadmin
+docker compose ps phpmyadmin
 ```
 
-Open a tunnel from Windows:
+Keep the following SSH command running in a separate Windows PowerShell window:
 
 ```powershell
 ssh -L 8081:127.0.0.1:8081 root@162.35.172.25
 ```
 
-Then open `http://127.0.0.1:8081`. Use:
+Then open `http://127.0.0.1:8081` in a browser. Sign in with:
 
-- System: MySQL
-- Server: `host.docker.internal`
 - Username: `grocery_erp_user`
+- Password: the value of `DB_PASSWORD` in `/var/www/grocery-erp/.env`
 - Database: `grocery_erp`
 
-Stop the viewer when finished:
+The server is already fixed to `host.docker.internal`; phpMyAdmin does not allow choosing an arbitrary database host. Stop the dashboard when finished:
 
 ```bash
-docker compose --profile tools stop adminer
+cd /var/www/grocery-erp
+docker compose --profile tools stop phpmyadmin
 ```
+
+The application does not display the database dashboard inside the ERP. This separation prevents a compromised ERP account from automatically granting raw database access. Access requires both VPS SSH credentials and the dedicated MySQL user password.
 
 ## Rollback
 

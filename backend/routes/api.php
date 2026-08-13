@@ -9,6 +9,7 @@ Route::post('/v1/login', [App\Http\Controllers\Api\V1\Auth\AuthController::class
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/v1/logout', [App\Http\Controllers\Api\V1\Auth\AuthController::class, 'logout']);
     Route::get('/v1/user', [App\Http\Controllers\Api\V1\Auth\AuthController::class, 'user']);
+    Route::put('/v1/user/password', [App\Http\Controllers\Api\V1\Auth\AuthController::class, 'changePassword'])->middleware('throttle:5,1');
 
     Route::get('/v1/grocery/options', [GroceryController::class, 'options']);
     Route::get('/v1/grocery/lookups/{resource}', [GroceryController::class, 'lookup']);

@@ -215,7 +215,10 @@ class DatabaseSeeder extends Seeder
 
     private function upsertUser(string $username, string $email, int $roleId): void
     {
-        $user = User::firstOrNew(['email' => $email]);
+        $user = User::withTrashed()->firstOrNew(['email' => $email]);
+        if ($user->trashed()) {
+            $user->restore();
+        }
         $user->username = $username;
         $user->role_id = $roleId;
         $user->BC = 'HQ';

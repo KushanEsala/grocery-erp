@@ -32,7 +32,7 @@ mysql -u root -e "CREATE DATABASE IF NOT EXISTS grocery_erp CHARACTER SET utf8mb
 
 The production Docker defaults intentionally avoid the existing hire-purchase ports: the Grocery ERP frontend is exposed at `http://localhost:3002`, and its API at `http://localhost:8009/api`. Docker uses the existing host MySQL service through `host.docker.internal`, with a separate `grocery_erp` database and `grocery_erp_user` account.
 
-Production is prepared for `https://pos.kushanesala.me`. For VPS specifications, DNS/HTTPS bootstrap, isolated database setup, safe Docker updates, and SSH-only Adminer access, see [`docs/VPS_DOCKER_DEPLOYMENT.md`](docs/VPS_DOCKER_DEPLOYMENT.md).
+Production is prepared for `https://pos.kushanesala.me`. For VPS specifications, DNS/HTTPS bootstrap, isolated database setup, safe Docker updates, and SSH-only phpMyAdmin access, see [`docs/VPS_DOCKER_DEPLOYMENT.md`](docs/VPS_DOCKER_DEPLOYMENT.md).
 
 ## Demo accounts
 

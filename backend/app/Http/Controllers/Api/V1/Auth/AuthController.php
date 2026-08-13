@@ -69,4 +69,39 @@ class AuthController extends Controller
             'data' => $request->user()->load('role.permissions'),
         ]);
     }
+
+    public function changePassword(Request $request)
+    {
+        $validated = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $user = $request->user();
+
+        if (!Hash::check($validated['current_password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['The current password is incorrect.'],
+            ]);
+        }
+
+        if (Hash::check($validated['password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'password' => ['The new password must be different from the current password.'],
+            ]);
+        }
+
+        $user->update(['password' => $validated['password']]);
+
+        $currentTokenId = $user->currentAccessToken()?->id;
+        $user->tokens()
+            ->when($currentTokenId, fn ($query) => $query->where('id', '!=', $currentTokenId))
+            ->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Password changed successfully. Other signed-in devices have been logged out.',
+            'data' => null,
+        ]);
+    }
 }

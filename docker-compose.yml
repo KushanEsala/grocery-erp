@@ -73,15 +73,18 @@ services:
     networks:
       - erp_network
 
-  adminer:
-    image: adminer:5
-    container_name: grocery_erp_adminer
+  phpmyadmin:
+    image: phpmyadmin:5.2-apache
+    container_name: grocery_erp_phpmyadmin
     restart: unless-stopped
     profiles: ["tools"]
     environment:
-      ADMINER_DEFAULT_SERVER: ${DB_HOST:-host.docker.internal}
+      PMA_HOST: ${DB_HOST:-host.docker.internal}
+      PMA_PORT: ${DB_PORT:-3306}
+      PMA_ARBITRARY: "0"
+      UPLOAD_LIMIT: 64M
     ports:
-      - "127.0.0.1:${DB_VIEWER_PORT:-8081}:8080"
+      - "127.0.0.1:${DB_VIEWER_PORT:-8081}:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

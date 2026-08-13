@@ -26,6 +26,7 @@ import {
   PackageCheck,
   PanelLeftClose,
   PanelLeftOpen,
+  KeyRound,
   ReceiptText,
   RefreshCcw,
   RotateCcw,
@@ -61,6 +62,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, module: 'dashboard' },
       { label: 'Point of Sale', href: '/dashboard/pos', icon: ShoppingCart, module: 'pos' },
+      { label: 'My Account', href: '/dashboard/account', icon: KeyRound },
     ],
   },
   {
