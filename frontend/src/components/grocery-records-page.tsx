@@ -208,7 +208,7 @@ const CONFIG: Record<
     eyebrow: "Stock control",
     title: "Stock adjustments",
     description:
-      "Authorized opening, damage, expiry, spoilage, and correction entries.",
+      "Opening adds initial stock to the selected store. Damage, expiry, spoilage, and corrections create auditable stock movements.",
     endpoint: "/v1/grocery/inventory",
     icon: RefreshCcw,
     create: "Adjust stock",
@@ -216,7 +216,8 @@ const CONFIG: Record<
   "stock-counts": {
     eyebrow: "Stock control",
     title: "Stock counts",
-    description: "Full and cycle count snapshots with variance posting.",
+    description:
+      "Record the physical quantity in a store, then post the difference against its current system balance as an auditable variance.",
     endpoint: "/v1/grocery/stock-counts",
     icon: ClipboardList,
     create: "Start count",

@@ -121,6 +121,59 @@ class GroceryWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_tracked_opening_stock_is_sellable_and_matches_pos_catalog(): void
+    {
+        $product = $this->postJson('/api/v1/grocery/products', [
+            'sku' => 'JUICE-OPEN', 'name' => 'Opening Juice', 'base_unit_id' => $this->eachId,
+            'retail_price' => 200, 'latest_cost' => 120, 'batch_tracked' => false,
+            'expiry_tracked' => true, 'barcodes' => ['890100000088'],
+        ])->assertOk()->json('data');
+
+        $this->postJson('/api/v1/grocery/stock-adjustments', [
+            'store_id' => $this->storeId, 'reason' => 'opening',
+            'lines' => [['product_id' => $product['id'], 'quantity_delta' => 12]],
+        ])->assertOk();
+
+        $this->assertDatabaseHas('product_batches', [
+            'store_id' => $this->storeId, 'product_id' => $product['id'],
+            'batch_no' => 'SYSTEM-OPENING', 'quantity' => 12,
+        ]);
+        $catalog = collect($this->getJson("/api/v1/grocery/lookups/products?store_id={$this->storeId}&search=JUICE-OPEN")
+            ->assertOk()->json('data'));
+        $this->assertSame(12.0, (float) $catalog->firstWhere('id', $product['id'])['stock']);
+
+        $shift = $this->postJson('/api/v1/grocery/shifts/open', [
+            'register_id' => $this->registerId, 'opening_float' => 0,
+        ])->assertOk()->json('data');
+        $this->postJson('/api/v1/grocery/pos/complete', [
+            'store_id' => $this->storeId, 'shift_id' => $shift['id'],
+            'lines' => [['product_id' => $product['id'], 'unit_id' => $this->eachId, 'quantity' => 2]],
+            'payments' => [['method' => 'cash', 'amount' => 400]],
+        ])->assertOk();
+
+        $this->assertSame(10.0, (float) DB::table('product_batches')
+            ->where('product_id', $product['id'])->where('batch_no', 'SYSTEM-OPENING')->value('quantity'));
+    }
+
+    public function test_pos_rejects_a_store_that_does_not_match_the_open_register(): void
+    {
+        $product = $this->createProduct('STORE-001', 'Store Guard Product', '890100000077');
+        $otherStore = (int) DB::table('stores')->where('BC', 'HQ')->where('id', '!=', $this->storeId)->value('id');
+        $this->postJson('/api/v1/grocery/stock-adjustments', [
+            'store_id' => $otherStore, 'reason' => 'opening',
+            'lines' => [['product_id' => $product['id'], 'quantity_delta' => 5]],
+        ])->assertOk();
+        $shift = $this->postJson('/api/v1/grocery/shifts/open', [
+            'register_id' => $this->registerId, 'opening_float' => 0,
+        ])->assertOk()->json('data');
+
+        $this->postJson('/api/v1/grocery/pos/complete', [
+            'store_id' => $otherStore, 'shift_id' => $shift['id'],
+            'lines' => [['product_id' => $product['id'], 'unit_id' => $this->eachId, 'quantity' => 1]],
+            'payments' => [['method' => 'cash', 'amount' => 250]],
+        ])->assertUnprocessable()->assertJsonValidationErrors('store_id');
+    }
+
     public function test_unit_conversion_transfer_and_stock_count_reconcile_base_quantity(): void
     {
         $packId = (int) DB::table('units')->where('code', 'PK')->value('id');
@@ -148,6 +201,13 @@ class GroceryWorkflowTest extends TestCase
             'store_id' => $this->storeId, 'type' => 'cycle', 'product_ids' => [$product['id']],
         ])->assertOk()->json('data');
         $countLine = $this->getJson("/api/v1/grocery/stock-counts/{$count['id']}")->assertOk()->json('data.lines.0');
+
+        // A movement after the snapshot must be considered when posting. The
+        // physical count is reconciled to the live balance, not the stale 12.
+        $this->postJson('/api/v1/grocery/stock-adjustments', [
+            'store_id' => $this->storeId, 'reason' => 'correction',
+            'lines' => [['product_id' => $product['id'], 'quantity_delta' => 2]],
+        ])->assertOk();
         $this->postJson("/api/v1/grocery/stock-counts/{$count['id']}/post", [
             'reason' => 'Verified physical count', 'lines' => [['line_id' => $countLine['id'], 'counted_quantity' => 11]],
         ])->assertOk();

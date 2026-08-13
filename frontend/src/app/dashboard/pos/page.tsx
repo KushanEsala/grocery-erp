@@ -137,14 +137,12 @@ export default function PointOfSalePage() {
       );
       const nextOptions = optionResponse.data!;
       setOptions(nextOptions);
-      const nextStore =
-        storeId ||
-        (nextOptions.open_shift
-          ? nextOptions.registers.find(
-              (register) =>
-                register.id === nextOptions.open_shift?.register_id
-            )?.store_id
-          : nextOptions.stores[0]?.id);
+      const openRegisterStore = nextOptions.open_shift
+        ? nextOptions.registers.find(
+            (register) => register.id === nextOptions.open_shift?.register_id
+          )?.store_id
+        : null;
+      const nextStore = openRegisterStore || storeId || nextOptions.stores[0]?.id;
       const resolvedStore = Number(nextStore || nextOptions.stores[0]?.id || 0);
       setStoreId(resolvedStore);
       const productResponse = await api.get<GroceryProduct[]>(
@@ -675,8 +673,13 @@ export default function PointOfSalePage() {
       }>(`/v1/grocery/sales/${id}`);
       const held = response.data;
       if (!held) return;
+      const heldStoreId = Number(held.store_id);
+      const productResponse = await api.get<GroceryProduct[]>(
+        `/v1/grocery/lookups/products?store_id=${heldStoreId}&limit=100`
+      );
+      const heldProducts = productResponse.data || [];
       const resumed = held.lines.flatMap((line) => {
-        const product = products.find(
+        const product = heldProducts.find(
           (candidate) => candidate.id === line.product_id
         );
         const unit = product?.units.find(
@@ -701,7 +704,8 @@ export default function PointOfSalePage() {
       setLastSale(null);
       setDraftLine(null);
       setEditingKey(null);
-      setStoreId(Number(held.store_id));
+      setStoreId(heldStoreId);
+      setProducts(heldProducts);
       setHeldSaleId(id);
       setHoldReference(String(held.hold_reference || ''));
       setHeldSales((current) => current.filter((sale) => sale.id !== id));

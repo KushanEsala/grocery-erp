@@ -96,8 +96,13 @@ class GroceryService
         return $products->map(function ($product) use ($barcodes, $units, $stocks, $batches) {
             $product->barcodes = collect($barcodes->get($product->id, []))->pluck('barcode')->values();
             $product->units = collect($units->get($product->id, []))->values();
-            $product->stock = (float) ($stocks[$product->id] ?? 0);
-            $product->batches = collect($batches->get($product->id, []))->values();
+            $productBatches = collect($batches->get($product->id, []))->values();
+            $product->stock = ($product->batch_tracked || $product->expiry_tracked)
+                ? (float) $productBatches
+                    ->filter(fn ($batch) => ! $product->expiry_tracked || ! $batch->expiry_date || Carbon::parse($batch->expiry_date)->startOfDay()->gte(today()))
+                    ->sum('quantity')
+                : (float) ($stocks[$product->id] ?? 0);
+            $product->batches = $productBatches;
             return $product;
         })->all();
     }
@@ -206,6 +211,12 @@ class GroceryService
             $requiresShift = DB::table('app_settings')->where('branch_code', $user->BC)->where('key', 'require_open_shift')->value('value') !== 'false';
             if (! $hold && $requiresShift && ! $shift) {
                 throw ValidationException::withMessages(['shift_id' => 'Open a cashier shift before completing a sale.']);
+            }
+            if ($shift) {
+                $registerStoreId = (int) DB::table('registers')->where('id', $shift->register_id)->value('store_id');
+                if ($registerStoreId !== (int) $store->id) {
+                    throw ValidationException::withMessages(['store_id' => 'The sale store must match the open register store.']);
+                }
             }
 
             $prepared = [];
@@ -400,6 +411,31 @@ class GroceryService
         ]);
     }
 
+    private function resolveTrackedBatch(User $user, int $storeId, object $product, ?int $batchId, string $reference): ?object
+    {
+        if ($batchId) {
+            $batch = DB::table('product_batches')->where('id', $batchId)
+                ->where('branch_code', $user->BC)->where('store_id', $storeId)
+                ->where('product_id', $product->id)->lockForUpdate()->first();
+            if (! $batch) throw ValidationException::withMessages(['product_batch_id' => "The selected batch is invalid for {$product->name}."]);
+            return $batch;
+        }
+        if (! $product->batch_tracked && ! $product->expiry_tracked) return null;
+
+        $batchNo = 'SYSTEM-OPENING';
+        $batch = DB::table('product_batches')->where('branch_code', $user->BC)->where('store_id', $storeId)
+            ->where('product_id', $product->id)->where('batch_no', $batchNo)->lockForUpdate()->first();
+        if ($batch) return $batch;
+
+        $id = DB::table('product_batches')->insertGetId([
+            'branch_code' => $user->BC, 'store_id' => $storeId, 'product_id' => $product->id,
+            'batch_no' => $batchNo, 'manufactured_date' => null, 'expiry_date' => null,
+            'quantity' => 0, 'unit_cost' => $product->average_cost,
+            'selling_price' => $product->retail_price, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        return DB::table('product_batches')->find($id);
+    }
+
     public function saleDetail(User $user, int $id): object
     {
         $sale = DB::table('sales as s')
@@ -554,11 +590,22 @@ class GroceryService
                 if (! $product) throw ValidationException::withMessages(['product_id' => 'Product is outside your branch.']);
                 $delta = round((float) $line['quantity_delta'], 6);
                 if ($delta < 0 && $this->stockQuantity($product->id, $store->id) + $delta < -0.000001) throw ValidationException::withMessages(['quantity_delta' => "Adjustment would make {$product->name} negative."]);
+                $requestedBatchId = $line['product_batch_id'] ?? null;
                 DB::table('stock_adjustment_lines')->insert([
-                    'stock_adjustment_id' => $id, 'product_id' => $product->id, 'product_batch_id' => $line['product_batch_id'] ?? null,
+                    'stock_adjustment_id' => $id, 'product_id' => $product->id, 'product_batch_id' => $requestedBatchId,
                     'quantity_delta' => $delta, 'unit_cost' => $product->average_cost, 'created_at' => now(), 'updated_at' => now(),
                 ]);
-                $this->moveStock($user, $store->id, $product->id, $line['product_batch_id'] ?? null, 'adjustment', $number, max(0, $delta), max(0, -$delta), $product->average_cost);
+                if ($delta < 0 && ($product->batch_tracked || $product->expiry_tracked) && ! $requestedBatchId) {
+                    foreach ($this->allocateStock($user, $store->id, $product, abs($delta)) as $allocation) {
+                        $this->moveStock($user, $store->id, $product->id, $allocation['batch_id'], 'adjustment', $number, 0, $allocation['quantity'], $product->average_cost);
+                    }
+                } else {
+                    $batch = $this->resolveTrackedBatch($user, $store->id, $product, $requestedBatchId, $number);
+                    if ($delta < 0 && $batch && (float) $batch->quantity + $delta < -0.000001) {
+                        throw ValidationException::withMessages(['quantity_delta' => "The selected batch does not have enough stock for {$product->name}."]);
+                    }
+                    $this->moveStock($user, $store->id, $product->id, $batch?->id, 'adjustment', $number, max(0, $delta), max(0, -$delta), $product->average_cost);
+                }
             }
             $this->audit($user, 'post', 'stock_adjustment', $id, $data['reason'], null, $data);
             return DB::table('stock_adjustments')->find($id);
@@ -670,12 +717,23 @@ class GroceryService
             foreach ($data['lines'] as $input) {
                 $line = DB::table('stock_count_lines')->where('id', $input['line_id'])->where('stock_count_id', $id)->first();
                 if (! $line) throw ValidationException::withMessages(['line_id' => 'Count line is invalid.']);
-                $counted = round((float) $input['counted_quantity'], 6); $variance = round($counted - (float) $line->system_quantity, 6);
+                $counted = round((float) $input['counted_quantity'], 6);
+                $product = DB::table('products')->find($line->product_id);
+                $currentQuantity = $line->product_batch_id
+                    ? (float) DB::table('product_batches')->where('id', $line->product_batch_id)->lockForUpdate()->value('quantity')
+                    : $this->stockQuantity($line->product_id, $count->store_id);
+                $variance = round($counted - $currentQuantity, 6);
                 DB::table('stock_count_lines')->where('id', $line->id)->update(['counted_quantity' => $counted, 'variance' => $variance, 'updated_at' => now()]);
                 if ($variance !== 0.0) {
-                    $product = DB::table('products')->find($line->product_id);
-                    if ($variance < 0 && $this->stockQuantity($product->id, $count->store_id) + $variance < -0.000001) throw ValidationException::withMessages(['counted_quantity' => "Variance would make {$product->name} negative."]);
-                    $this->moveStock($user, $count->store_id, $product->id, $line->product_batch_id, 'stock_count', $count->count_no, max(0, $variance), max(0, -$variance), $product->average_cost);
+                    if ($variance < 0 && $currentQuantity + $variance < -0.000001) throw ValidationException::withMessages(['counted_quantity' => "Variance would make {$product->name} negative."]);
+                    if ($variance < 0 && ($product->batch_tracked || $product->expiry_tracked) && ! $line->product_batch_id) {
+                        foreach ($this->allocateStock($user, $count->store_id, $product, abs($variance)) as $allocation) {
+                            $this->moveStock($user, $count->store_id, $product->id, $allocation['batch_id'], 'stock_count', $count->count_no, 0, $allocation['quantity'], $product->average_cost);
+                        }
+                    } else {
+                        $batch = $this->resolveTrackedBatch($user, $count->store_id, $product, $line->product_batch_id, $count->count_no);
+                        $this->moveStock($user, $count->store_id, $product->id, $batch?->id, 'stock_count', $count->count_no, max(0, $variance), max(0, -$variance), $product->average_cost);
+                    }
                 }
             }
             DB::table('stock_counts')->where('id', $id)->update(['status' => 'posted', 'posted_by' => $user->id, 'updated_at' => now()]);
